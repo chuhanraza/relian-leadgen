@@ -18,7 +18,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from common.gemini_client import generate
+from common.groq_client import generate
 from common.db import get_client
 
 load_dotenv()
@@ -38,7 +38,7 @@ Rules:
 - 120-180 words. No bullet lists of every spec — weave in only what's relevant to a
   reasonable outreach pitch a busy person will actually read.
 - End with a light, low-pressure call to action (e.g. offer a sample or a short call).
-- Sign the email exactly as: "Hamad, Relian MFG"
+- Do NOT add any sign-off or signature line — that gets appended separately.
 - Output ONLY the email body text (no subject line, no preamble, no markdown).
 """
 
@@ -55,9 +55,11 @@ apparel/gear to spec for brands like yours" — no numbers, no named materials).
 Rules:
 - 100-150 words. Reference the specific detail above naturally.
 - End with a light, low-pressure call to action (e.g. offer a sample or a short call).
-- Sign the email exactly as: "Hamad, Relian MFG"
+- Do NOT add any sign-off or signature line — that gets appended separately.
 - Output ONLY the email body text (no subject line, no preamble, no markdown).
 """
+
+SIGNATURE = "\n\nBest regards,\nHamad, Relian MFG"
 
 SUBJECT_TEMPLATES = {
     "moto_apparel": "Manufacturing partner for {brand_name}?",
@@ -102,7 +104,7 @@ def run(vertical: str) -> None:
             )
             notes_suffix = " AWAITING SPEC VERIFICATION."
 
-        body = generate(prompt).strip()
+        body = generate(prompt).strip() + SIGNATURE
         subject = SUBJECT_TEMPLATES[vertical].format(brand_name=lead["brand_name"])
 
         db.table("outreach_leads").update(

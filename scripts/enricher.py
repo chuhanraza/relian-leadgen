@@ -1,10 +1,10 @@
 """Stage 2: Enricher.
 
 For every status='researched' lead that hasn't been enriched yet (research_notes IS NULL),
-fetches the brand's site + one social profile via web search, pulls 1-2 genuine specific
-details, and attempts to find a real published contact email. Never guesses an email
-pattern — no email found means status='skipped_no_email' and the lead does not proceed to
-the Copywriter.
+fetches the brand's actual site + a DuckDuckGo search for their contact info, pulls 1-2
+genuine specific details, and attempts to find a real published contact email. Never
+guesses an email pattern — no email found means status='skipped_no_email' and the lead
+does not proceed to the Copywriter.
 
 Usage:
   python scripts/enricher.py moto_apparel
@@ -15,25 +15,31 @@ import sys
 
 from dotenv import load_dotenv
 
-from common.gemini_client import research
 from common.db import get_client
+from common.groq_client import generate
 from common.parsing import extract_json
+from common.web_search import ddg_search, fetch_page_text, format_results
 
 load_dotenv()
 
 PROMPT = """Research this company for a B2B outreach pitch: {brand_name} ({website_url}).
 
-1. Find 1-2 GENUINE, specific details from their own website or a social profile —
-   positioning, materials they currently use, or any stated values like "made
-   domestically"/"made in USA"/"handmade locally". These must be real, verifiable
-   specifics, not generic guesses. If the brand markets itself as domestically-made or
-   in-house manufactured, note that explicitly — it makes them a weaker outsourcing
-   prospect, so flag it rather than omitting it.
+Homepage text (may be empty if the page couldn't be fetched):
+{page_text}
 
-2. Find a REAL, PUBLISHED contact email from their site (contact page, about page,
-   footer) or a linked LinkedIn/social profile. Do NOT guess or construct a pattern email
-   (e.g. do not invent info@domain.com unless you actually saw it published). If you
-   cannot find one, say so — do not fabricate.
+Web search results for "{brand_name} contact email":
+{search_results}
+
+1. From the material above, find 1-2 GENUINE, specific details — positioning, materials
+   they currently use, or any stated values like "made domestically"/"made in USA"/
+   "handmade locally". These must be real specifics actually present above, not generic
+   guesses. If the brand markets itself as domestically-made or in-house manufactured,
+   note that explicitly — it makes them a weaker outsourcing prospect, so flag it rather
+   than omitting it.
+
+2. From the material above, find a REAL, PUBLISHED contact email. Do NOT guess or
+   construct a pattern email (e.g. do not invent info@domain.com unless it actually
+   appears in the text above). If no email appears above, say so — do not fabricate.
 
 Reply with ONLY a fenced ```json code block, a single object with exactly these keys:
 - research_notes: string, 1-3 sentences with the specific detail(s) found
@@ -57,11 +63,19 @@ def run(vertical: str) -> None:
     print(f"[enricher] vertical={vertical} pending={len(leads)}")
 
     for lead in leads:
+        website_url = lead.get("website_url") or f"https://{lead['domain']}"
+        page_text = fetch_page_text(website_url) or "(could not fetch page)"
+        search_results = format_results(
+            ddg_search(f"{lead['brand_name']} contact email", max_results=5)
+        )
         prompt = PROMPT.format(
-            brand_name=lead["brand_name"], website_url=lead.get("website_url") or lead["domain"]
+            brand_name=lead["brand_name"],
+            website_url=website_url,
+            page_text=page_text,
+            search_results=search_results,
         )
         try:
-            raw = research(prompt, max_uses=5)
+            raw = generate(prompt, max_tokens=1024)
             data = extract_json(raw)
         except Exception as exc:  # noqa: BLE001 — a single lead's research failure shouldn't kill the run
             print(f"[enricher] failed for {lead['domain']}: {exc}")
