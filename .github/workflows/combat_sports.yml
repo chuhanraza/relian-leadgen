@@ -1,0 +1,28 @@
+name: combat_sports daily pipeline
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 9 * * *"
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+      GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+      GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python scripts/lead_hunter.py combat_sports
+      - run: python scripts/enricher.py combat_sports
+      - run: python scripts/copywriter.py combat_sports
+      - run: python scripts/sender.py combat_sports
+      - run: python scripts/daily_summary.py combat_sports
