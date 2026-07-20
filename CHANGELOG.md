@@ -1,5 +1,52 @@
 # Changelog
 
+## 2026-07-21 — Swap combat_sports catalogue from gloves to hand wraps
+
+Replaced the active combat_sports product photo catalogue with hand wraps, sourced from
+two local Google Drive folders (`Range 15` and `Range 18/ispo models`), reviewed by
+actually opening and looking at each candidate image (the copywriter model that picks
+images is text-only, so this is a one-time manual tagging pass, same approach as the
+original glove catalogue).
+
+- **Found**: 236 images total across both folders (46 in `Range 15`, 190 in
+  `Range 18/ispo models` — 100 top-level RAW-named originals + 90 in an "Edited low
+  resolution" subfolder). No PDF lookbook found in either folder — only `.jpg`/`.JPG`
+  files plus one `Edited low resolution.rar` archive in `ispo models`, which by name and
+  context appears to be a backup of the same edited images already reviewed there, not a
+  separate lookbook (not extracted/opened, given no other signal it's anything else).
+- **Reviewed**: `Range 15` turned out to be a dedicated hand-wrap product shoot — every
+  image opened there showed the wraps themselves, their leather patch, or their
+  packaging; zero gloves or unrelated products. `Range 18/ispo models` turned out to be a
+  general mixed catalogue shoot instead — representative sampling spread across its full
+  numbered range (01-57) and every distinct photo-session cluster in its `_MG_*` files
+  (~14 images opened) showed boxing/MMA gloves, focus mitts, shin guards, headgear, and
+  gi uniforms; zero hand wraps found. Not every one of the 190 ispo-models images was
+  individually opened (impractical at that volume) — the conclusion rests on consistent
+  sampling across every session cluster, not an exhaustive check.
+- **Selected 8** (all from `Range 15`) into `assets/catalogue/combat_sports/`, replacing
+  the glove images there: 4 colorways of the Heritage cotton-blend wrap with leather
+  patch (red/green/blue/black — each a composite shot showing the rolled wrap, patch,
+  and mesh pouch together), 2 angles of the red Pro-Stretch slip-on quick-wrap, and 2
+  angles of the Hygiene Kit mesh carrying pouch. Originals copied at full quality, no
+  recompression/resizing.
+- **Excluded**: near-duplicate crop/retouch variants of the same 4 colorways (files with
+  `-1`/`-2` suffixes — redundant with the composite hero shots already selected), and the
+  entire `ispo models` folder (different product line — gloves/mitts/shin
+  guards/gis, not wraps, per the sampling above).
+- `config/catalogue_combat_sports_gloves.json` — the old glove catalogue, renamed/archived
+  (git history preserved via `git mv`), no longer referenced by any code path.
+- `config/catalogue_combat_sports.json` — new active file, 8 entries matching the
+  filenames above, each description written from what's actually visible in that
+  specific image (not reused generic text).
+- No code changes needed: `copywriter.py`'s `load_catalogue()` builds the path as
+  `f"catalogue_{vertical}.json"`, so it picked up the new file automatically. Verified by
+  loading it directly — all 8 entries resolve correctly.
+- The 9 old glove images in `assets/catalogue/combat_sports/` were left in place
+  (untouched, not deleted) alongside the 8 new wrap images — only the JSON catalogue
+  determines what the Copywriter can select from, so the old glove files are now
+  effectively orphaned/unreferenced there. Flagging in case Hamad wants them removed for
+  tidiness; left as-is since deleting wasn't asked for.
+
 ## 2026-07-20 — Add independent/boutique-scale disqualifier to verify prompts
 
 Belstaff (moto_apparel) passed the brand-vs-manufacturer check and got inserted as a
