@@ -76,13 +76,24 @@ Homepage text of the top likely match (may be empty if unfetchable):
 2. Using the homepage text if available, verify: is this a BRAND (designs/sells apparel
    under its own label) rather than a manufacturer/wholesale distributor/OEM factory? If
    the homepage text says they ARE the manufacturer/factory for other brands, this fails.
+3. Confirm this is an INDEPENDENT, BOUTIQUE-TO-MID-SIZE operation, not a
+   good private-label manufacturing prospect if it's actually one of
+   these: a globally recognized heritage or luxury brand, a brand owned
+   by or part of a large corporate/fashion group, or a brand with
+   mass-market distribution across major retail chains (e.g. brands at
+   the scale of Belstaff, Alpinestars, Dainese are TOO LARGE —
+   disqualify regardless of how steps 1-2 went). If you recognize the
+   name as large/well-established/conglomerate-owned from your own
+   knowledge, or the homepage text itself signals large scale (e.g.
+   investor-relations language, "since 18xx" heritage branding, dozens
+   of international retail locations), this fails.
 
 Reply with ONLY a fenced ```json code block, a single object with exactly these keys:
-- qualifies: boolean (true only if you found their real official site AND it's a brand,
-  not a manufacturer/distributor)
+- qualifies: boolean (true only if you found their real official site, it's a brand not a
+  manufacturer/distributor, AND it passes the independent boutique/mid-size check in step 3)
 - domain: bare domain (e.g. example.com) of their official site, or null
 - website_url: full URL, or null
-- one_line_reasoning: string
+- one_line_reasoning: string (state explicitly if it failed step 3 specifically)
 No other text.
 """,
     "combat_sports": """Candidate: "{brand_name}" (a possible combat-sports gym/shop/brand, region: {region})
@@ -99,11 +110,15 @@ Homepage text of the top likely match (may be empty if unfetchable):
 2. Using the homepage text if available, confirm this is genuinely combat-sports related
    (boxing/MMA/Muay Thai/BJJ), not general fitness or a traditional non-combat dojo, and
    not based in Mainland China.
-3. Classify into exactly one sub_type: core_gym (a gym/academy), shop_distributor (a shop
+3. Confirm this is NOT a large corporate-owned gym franchise/chain
+   (national or international), and NOT a big-box retail chain
+   masquerading as a "shop" — if so, disqualify regardless of category
+   fit, even if it otherwise looks like a good match.
+4. Classify into exactly one sub_type: core_gym (a gym/academy), shop_distributor (a shop
    or distributor), or small_brand (a small private gear brand).
 
 Reply with ONLY a fenced ```json code block, a single object with exactly these keys:
-- qualifies: boolean
+- qualifies: boolean (false if step 3 fails, regardless of other steps)
 - domain: bare domain (e.g. example.com), or null
 - website_url: full URL, or null
 - sub_type: one of "core_gym", "shop_distributor", "small_brand", or null

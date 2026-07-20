@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-07-20 — Add independent/boutique-scale disqualifier to verify prompts
+
+Belstaff (moto_apparel) passed the brand-vs-manufacturer check and got inserted as a
+lead, but it's a large heritage brand owned by a group, not a boutique/mid-size
+independent brand — the actual target profile. Added an explicit size/independence
+disqualifier to both `VERIFY_PROMPTS` in `scripts/lead_hunter.py`:
+
+- `moto_apparel`: new step 3 disqualifies globally recognized heritage/luxury brands,
+  brands owned by a large corporate/fashion group, or brands with mass-market retail
+  distribution (reference scale: Belstaff, Alpinestars, Dainese are all TOO LARGE).
+  `qualifies` now requires step 3 to pass too, and `one_line_reasoning` states explicitly
+  if a candidate failed specifically on size/independence.
+- `combat_sports`: new step 3 disqualifies large corporate-owned gym franchises/chains
+  and big-box retail chains masquerading as a "shop" (existing sub_type classification
+  step shifted to step 4). `qualifies` is false if step 3 fails regardless of other steps.
+
+Stopgap until Gemini research on more reliable size-classification signals comes back.
+
 ## 2026-07-20 — Catalogue image attachments + per-vertical From address
 
 - `outreach_leads.catalogue_images text[]` added. Copywriter now also picks 1-2 relevant
