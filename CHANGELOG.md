@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-07-21 — real_specs_combat_sports.json verified and activated
+
+`config/real_specs_combat_sports.json` filled in with the real 3-model list (Heritage
+Cotton-Blend, Pro-Stretch, Hygiene Kit) and `verified_by_hamad` flipped to `true` —
+combat_sports Copywriter's deterministic template now goes live on the next run.
+
 ## 2026-07-21 — combat_sports Copywriter: deterministic template replacing open-ended generation
 
 `scripts/copywriter.py` rewritten so combat_sports now builds a deterministic template

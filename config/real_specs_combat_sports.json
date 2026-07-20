@@ -1,8 +1,10 @@
 {
   "materials": [
-    { "name": "PLACEHOLDER — e.g. actual leather/synthetic spec for gloves/wraps", "verified": false, "notes": "" }
+    { "name": "Heritage (Cotton-Blend)", "verified": true, "notes": "Heavy-duty fabric with a stitched leather patch for luxury branding" },
+    { "name": "Pro-Stretch", "verified": true, "notes": "Elastic-cotton weave with 3D silicon printing that won't peel" },
+    { "name": "Hygiene Kit", "verified": true, "notes": "Comes packaged in a mesh wash-bag, solves the tangled-wrap problem" }
   ],
   "certifications_or_benchmarks": [],
   "moq_and_lead_time": "",
-  "verified_by_hamad": false
+  "verified_by_hamad": true
 }
