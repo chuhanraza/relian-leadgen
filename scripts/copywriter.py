@@ -1,14 +1,10 @@
 """Stage 3: Copywriter.
 
-Only runs on leads with a real found email (status='researched', contact_email set,
-research_notes set). Drafts a short, specific pitch referencing the actual research_notes
-detail. Technical claims are pulled ONLY from config/real_specs_<vertical>.json, and ONLY
-if verified_by_hamad is true — otherwise the draft uses a generic capability statement and
-research_notes gets "AWAITING SPEC VERIFICATION" appended, so it's visible in review.
-
-Also picks 1-2 relevant product photos from config/catalogue_<vertical>.json for the
-Sender to attach — the model can't see the images, so each one was tagged with a short
-text description once, up front, by actually looking at it.
+Only runs on leads with a real found email. combat_sports uses a deterministic
+template built from config/real_specs_combat_sports.json (Hamad's real example
+structure) with the LLM scoped to ONLY the opening personalization line, so the
+three named models, subject, and CTA never drift from what's verified. moto_apparel
+still uses the older open-ended prompt pending its own spec verification.
 
 Usage:
   python scripts/copywriter.py moto_apparel
@@ -30,7 +26,13 @@ from common.parsing import extract_json
 
 load_dotenv()
 
-CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
+BASE_DIR = Path(__file__).resolve().parent.parent
+CONFIG_DIR = BASE_DIR / "config"
+ASSETS_DIR = BASE_DIR / "assets" / "catalogue"
+
+SIGNATURE = "\n\nHamad, Relian MFG"
+
+# ---------- moto_apparel: unchanged, still open-ended pending spec verification ----------
 
 PROMPT_VERIFIED = """Write a short, specific cold outreach email pitching manufacturing
 partnership from Relian MFG (Sialkot, Pakistan) to {brand_name}.
@@ -70,6 +72,64 @@ Rules:
 - Output ONLY the email body text (no subject line, no preamble, no markdown).
 """
 
+SUBJECT_TEMPLATES = {
+    "moto_apparel": "Manufacturing partner for {brand_name}?",
+}
+
+# ---------- combat_sports: deterministic template, LLM only writes the opening line ----------
+
+COMBAT_SUBJECT = "Question regarding hand wraps stock"
+
+COMBAT_OPENING_LINE_PROMPT = """A lead named "{brand_name}" is getting a cold outreach
+email about private-label hand wraps. Here's what we actually found out about them:
+"{research_notes}"
+
+Write ONE short, plain sentence (max 25 words) to open the email with, in the voice of
+someone who's looked at their business specifically, not a mass mailer. Ground it in the
+real detail above if it's genuinely usable. If the detail isn't specific/useful enough to
+build a real sentence from, write a soft, generic-but-honest opener instead — e.g.
+"I follow your brand and wanted to check whether your current hand wrap lineup has room
+for something new." NEVER assert that their current product or supplier is subpar, low
+quality, or outdated — we have no evidence of that and it reads as a lie if untrue.
+
+Output ONLY that one sentence. No quotes, no preamble, no signature.
+"""
+
+
+def build_combat_sports_email(brand_name: str, research_notes: str, specs: dict) -> tuple[str, str]:
+    opening = generate(
+        COMBAT_OPENING_LINE_PROMPT.format(brand_name=brand_name, research_notes=research_notes),
+        max_tokens=100,
+    ).strip()
+
+    model_lines = []
+    for i, m in enumerate(specs.get("materials", []), start=1):
+        model_lines.append(f'{i}. **{m["name"]}:** {m["notes"]}')
+    models_block = "\n".join(model_lines)
+
+    lookbook_path = ASSETS_DIR / "lookbook_hand_wraps.pdf"
+    next_step_line = (
+        "\n\n**Next Step:** I have attached our Lookbook for hand wraps."
+        if lookbook_path.exists()
+        else ""
+    )
+
+    body = (
+        f"Hi Sir / Madam,\n\n"
+        f"{opening}\n\n"
+        f'We manufacture private label "Boutique-Grade" wraps for brands that want to '
+        f"dominate the market. We have multiple specialized models ready for your 2026 "
+        f"collection:\n\n{models_block}"
+        f"{next_step_line}\n\n"
+        f"Do you have 5 minutes this week to discuss which model fits your brand? "
+        f"I would share my full catalogue once you request."
+        f"{SIGNATURE}"
+    )
+    return COMBAT_SUBJECT, body
+
+
+# ---------- shared: image selection ----------
+
 IMAGE_SELECT_PROMPT = """A lead named "{brand_name}" is getting a manufacturing pitch email.
 What we know about them: "{research_notes}"
 
@@ -80,13 +140,6 @@ Pick the 1-2 images most relevant to this specific lead (e.g. if they mention gl
 glove photos; if unclear, pick a representative mix). Reply with ONLY a fenced ```json code
 block: a JSON array of 1-2 filename strings taken exactly from the list above. No other text.
 """
-
-SIGNATURE = "\n\nBest regards,\nHamad, Relian MFG"
-
-SUBJECT_TEMPLATES = {
-    "moto_apparel": "Manufacturing partner for {brand_name}?",
-    "combat_sports": "Manufacturing partner for {brand_name} gear?",
-}
 
 
 def load_specs(vertical: str) -> dict:
@@ -138,21 +191,28 @@ def run(vertical: str) -> None:
     print(f"[copywriter] vertical={vertical} pending={len(leads)} verified_by_hamad={verified}")
 
     for lead in leads:
-        if verified:
+        notes_suffix = ""
+
+        if vertical == "combat_sports" and verified:
+            subject, body = build_combat_sports_email(lead["brand_name"], lead["research_notes"], specs)
+        elif verified:
             prompt = PROMPT_VERIFIED.format(
                 brand_name=lead["brand_name"],
                 research_notes=lead["research_notes"],
                 specs_json=json.dumps(specs, indent=2),
             )
-            notes_suffix = ""
+            body = generate(prompt).strip() + SIGNATURE
+            subject = SUBJECT_TEMPLATES[vertical].format(brand_name=lead["brand_name"])
         else:
             prompt = PROMPT_UNVERIFIED.format(
                 brand_name=lead["brand_name"], research_notes=lead["research_notes"]
             )
+            body = generate(prompt).strip() + SIGNATURE
+            subject = SUBJECT_TEMPLATES.get(vertical, "Manufacturing partner for {brand_name}?").format(
+                brand_name=lead["brand_name"]
+            )
             notes_suffix = " AWAITING SPEC VERIFICATION."
 
-        body = generate(prompt).strip() + SIGNATURE
-        subject = SUBJECT_TEMPLATES[vertical].format(brand_name=lead["brand_name"])
         images = select_images(vertical, lead["brand_name"], lead["research_notes"], catalogue)
 
         db.table("outreach_leads").update(

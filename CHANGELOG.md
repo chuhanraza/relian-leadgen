@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-07-21 — combat_sports Copywriter: deterministic template replacing open-ended generation
+
+`scripts/copywriter.py` rewritten so combat_sports now builds a deterministic template
+(fixed subject "Question regarding hand wraps stock", hardcoded 3-model list rendered
+verbatim from `real_specs_combat_sports.json.materials`, a lookbook line that only appears
+if `assets/catalogue/lookbook_hand_wraps.pdf` actually exists, fixed CTA) instead of
+open-ended generation — the LLM is now scoped to writing ONLY the one-sentence opening
+personalization line, so the three named models, subject, and CTA can never drift from
+what's verified. moto_apparel is unchanged, still on the older open-ended
+verified/unverified prompts pending its own spec verification.
+
+**Not yet live**: `real_specs_combat_sports.json` still has `verified_by_hamad: false`
+(placeholder materials), so the deterministic template's gate
+(`vertical == "combat_sports" and verified`) doesn't trigger yet — combat_sports still
+falls through to the same generic unverified path as before until Hamad fills in the real
+3-model list and flips that flag. No `researched`-status combat_sports leads existed at
+push time to run a live test against, and even if they had, the unverified specs file
+means the live pipeline wouldn't have exercised the new path anyway. Verified the new code
+works correctly instead via a standalone call to `build_combat_sports_email()` with example
+(clearly non-production) specs — output pasted in the session for Hamad's sanity check.
+Also confirmed the conditional lookbook line correctly stays absent, since no
+`lookbook_hand_wraps.pdf` exists yet (per the prior session's search — none found in either
+source folder).
+
 ## 2026-07-21 — Swap combat_sports catalogue from gloves to hand wraps
 
 Replaced the active combat_sports product photo catalogue with hand wraps, sourced from
