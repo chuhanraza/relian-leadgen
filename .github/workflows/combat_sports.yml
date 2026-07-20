@@ -21,6 +21,8 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -r requirements.txt
+      - name: Pre-flight credential check
+        run: python scripts/healthcheck.py
       - run: python scripts/lead_hunter.py combat_sports
       - run: python scripts/enricher.py combat_sports
       - run: python scripts/copywriter.py combat_sports

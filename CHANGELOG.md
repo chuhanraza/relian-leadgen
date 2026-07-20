@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-07-21 — Cron investigation + pre-flight healthcheck step
+
+Investigated why neither scheduled workflow had fired automatically yet. Root cause:
+not a bug — the workflow files first landed on the default branch at 2026-07-20T10:39Z
+(commit `49d45a5`), which is *after* both that day's cron times (06:00 and 09:00 UTC) had
+already passed. Real UTC time as of this check was 2026-07-20T19:53Z, so neither cron slot
+had had a genuine opportunity to fire yet — the first real opportunities are
+2026-07-21T06:00Z (moto_apparel) and 2026-07-21T09:00Z (combat_sports), still hours out.
+Confirmed via the GitHub web UI that Actions is enabled and neither workflow shows a
+"disabled" state; cron syntax in both YAML files (`0 6 * * *` / `0 9 * * *`) is valid.
+Note for future date references in this log: "today" here tracks Hamad's local calendar
+day (Pakistan, UTC+5), not UTC — worth keeping in mind for anything cron-timing-related.
+
+Also found, unrelated to the cron question: **the GitHub repo is public**, not private as
+originally intended — confirmed by viewing full Actions run history from a logged-out
+browser session. Flagged to Hamad directly; not something this session can fix (repo
+visibility is an account-level setting, not something achievable via ordinary git push).
+
+Added `scripts/healthcheck.py` — a pre-flight step (Groq call, Supabase query, Gmail OAuth
+refresh) that now runs first in both workflows, right after `pip install`. Individual
+pipeline stages intentionally swallow per-lead errors so one bad lead doesn't kill a whole
+run, which means a fully invalid/expired credential could otherwise produce five green
+checkmarks while silently doing nothing all day. The health check fails the job loudly and
+immediately instead (verified locally: exits 1 and names the broken service when given a
+deliberately invalid Groq key; exits 0 with all real credentials).
+
 ## 2026-07-21 — real_specs_combat_sports.json verified and activated
 
 `config/real_specs_combat_sports.json` filled in with the real 3-model list (Heritage

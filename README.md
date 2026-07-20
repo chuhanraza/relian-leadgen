@@ -15,7 +15,13 @@ send manually each morning. This is a permanent design constraint, not a placeho
 ## Architecture
 
 Five stages, one script each, run in order by the two GitHub Actions workflows
-(`.github/workflows/moto_apparel.yml`, `combat_sports.yml`, staggered 6am/9am UTC cron):
+(`.github/workflows/moto_apparel.yml`, `combat_sports.yml`, staggered 6am/9am UTC cron).
+Each workflow runs `scripts/healthcheck.py` first — a real Groq call, Supabase query, and
+Gmail OAuth refresh. Individual pipeline stages intentionally catch and log per-lead
+failures rather than crashing (one bad lead shouldn't kill a whole day's run), which means
+a fully invalid/expired credential could otherwise produce five green checkmarks while
+silently doing nothing useful all day. The health check fails the whole job loudly and
+immediately instead, before any real stage runs, and names exactly which credential broke.
 
 1. `scripts/lead_hunter.py` — rotates through regions (least-recently-covered first, see
    `scripts/common/regions.py`), runs a free DuckDuckGo search and hands the results to
