@@ -18,7 +18,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from common.claude_client import generate
+from common.gemini_client import generate
 from common.db import get_client
 
 load_dotenv()

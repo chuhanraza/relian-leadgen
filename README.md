@@ -18,8 +18,8 @@ Five stages, one script each, run in order by the two GitHub Actions workflows
 (`.github/workflows/moto_apparel.yml`, `combat_sports.yml`, staggered 6am/9am UTC cron):
 
 1. `scripts/lead_hunter.py` — rotates through regions (least-recently-covered first, see
-   `scripts/common/regions.py`), uses Claude + web search to find candidate leads, dedups
-   by `(vertical, domain)`, inserts as `status='researched'`.
+   `scripts/common/regions.py`), uses Gemini + Google Search grounding to find candidate
+   leads, dedups by `(vertical, domain)`, inserts as `status='researched'`.
 2. `scripts/enricher.py` — for each researched lead, pulls 1-2 genuine specifics from
    their site/social and looks for a real published email. No email found →
    `status='skipped_no_email'`, stops there (never proceeds to Copywriter).
@@ -37,11 +37,12 @@ Data lives in a new `leadgen` schema inside the existing **relian-erp** Supabase
 only the `service_role` key (used by these scripts) can read/write it — anon/authenticated
 roles get nothing, and none of the ERP's own `public.*` tables were touched.
 
-## Setup
+## Setup — everything here is free, no billing on any service
 
 1. `python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`
 2. `cp .env.example .env` and fill in:
-   - `ANTHROPIC_API_KEY` — from console.anthropic.com
+   - `GEMINI_API_KEY` — free key, no card required, from
+     [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
    - `SUPABASE_SERVICE_ROLE_KEY` — relian-erp project → Settings → API → service_role key
      (never commit this, never expose it client-side)
    - Gmail credentials — see below
@@ -58,8 +59,8 @@ own browser, logged into `relianmfg@gmail.com`. Steps:
    `GMAIL_CLIENT_SECRET`.
 3. Run `python scripts/get_gmail_refresh_token.py` locally. It opens a browser consent
    screen — sign in as `relianmfg@gmail.com` and approve. It prints a refresh token.
-4. Add all five as GitHub repo secrets (Settings → Secrets and variables → Actions):
-   `ANTHROPIC_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GMAIL_CLIENT_ID`,
+4. Add all six as GitHub repo secrets (Settings → Secrets and variables → Actions):
+   `GEMINI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GMAIL_CLIENT_ID`,
    `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`.
 
 Until these secrets exist, both workflows will fail at the API-call steps — that's

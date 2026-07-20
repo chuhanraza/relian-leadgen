@@ -27,3 +27,17 @@
 - No existing glove-buyer pipeline or `relian-leadgen` Supabase project was found during
   Step-0 recon, contrary to the original brief's assumption — this was built from scratch
   and confirmed with Hamad before proceeding (see session for detail).
+
+## 2026-07-20 — Swap research/drafting engine to Gemini (free tier)
+
+- Replaced `scripts/common/claude_client.py` (Anthropic API) with
+  `scripts/common/gemini_client.py` (Google Gemini API via `google-genai`), using Gemini's
+  free-tier Google Search grounding tool in place of Claude's web_search tool. Reason:
+  Hamad wants zero paid services — Anthropic's API has no sustained-use free tier, while
+  Gemini's free tier (no card required) comfortably covers this pipeline's actual daily
+  volume.
+  - `GEMINI_API_KEY` replaces `ANTHROPIC_API_KEY` everywhere: `.env.example`, both GitHub
+    Actions workflows, README.
+  - `lead_hunter.py`, `enricher.py`, `copywriter.py` now import from `gemini_client`
+    instead of `claude_client`.
+  - `requirements.txt`: `google-genai` replaces `anthropic`.

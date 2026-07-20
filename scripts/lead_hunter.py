@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 
-from common.claude_client import research
+from common.gemini_client import research
 from common.db import get_client
 from common.parsing import extract_json
 from common.regions import REGIONS_BY_VERTICAL
