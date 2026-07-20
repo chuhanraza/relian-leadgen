@@ -25,9 +25,18 @@ from common.db import get_client
 from common.groq_client import generate
 from common.parsing import extract_json
 from common.regions import REGIONS_BY_VERTICAL
-from common.web_search import ddg_search, fetch_page_text, format_results
+from common.web_search import (
+    ddg_search,
+    fetch_page_text,
+    format_results,
+    get_ddg_failure_count,
+    reset_ddg_failure_count,
+)
 
 load_dotenv()
+
+MAX_REGIONS_PER_RUN = 4
+QUALIFIED_TARGET_PER_RUN = 20
 
 DISCOVERY_QUERIES = {
     "moto_apparel": "boutique motorcycle technical apparel brand {region}",
@@ -128,17 +137,20 @@ No other text.
 }
 
 
-def pick_next_region(db, vertical: str) -> str:
+def pick_regions(db, vertical: str, n: int) -> list[str]:
+    """Up to n regions, least-recently-searched first (never-searched regions come
+    before any region that's ever been searched, then oldest last_searched_at). All n
+    are picked up front in one ranking pass, so there's no risk of a region repeating
+    within the same run even though several get processed sequentially.
+    """
     regions = REGIONS_BY_VERTICAL[vertical]
     rows = db.table("regions_covered").select("*").eq("vertical", vertical).execute().data
     covered = {row["region"]: row for row in rows}
 
     uncovered = [r for r in regions if r not in covered]
-    if uncovered:
-        return uncovered[0]
-
-    ranked = sorted(covered.values(), key=lambda row: row["last_searched_at"] or "")
-    return ranked[0]["region"]
+    ranked_covered = sorted(covered.values(), key=lambda row: row["last_searched_at"] or "")
+    ordered = uncovered + [row["region"] for row in ranked_covered]
+    return ordered[:n]
 
 
 def discover_names(vertical: str, region: str) -> list[str]:
@@ -148,7 +160,7 @@ def discover_names(vertical: str, region: str) -> list[str]:
     raw = generate(prompt, max_tokens=1024)
     candidates = extract_json(raw)
     names = [c.get("brand_name", "").strip() for c in candidates if c.get("brand_name")]
-    return names[:8]
+    return names[:15]
 
 
 def _name_match_score(brand_name: str, url: str) -> int:
@@ -188,60 +200,88 @@ def verify_candidate(vertical: str, brand_name: str, region: str) -> dict | None
     return data
 
 
-def run(vertical: str) -> int:
+def run(vertical: str) -> dict:
+    reset_ddg_failure_count()
     db = get_client()
-    region = pick_next_region(db, vertical)
-    print(f"[lead_hunter] vertical={vertical} region={region}")
-
-    names = discover_names(vertical, region)
-    print(f"[lead_hunter] discovered {len(names)} candidate names: {names}")
+    regions = pick_regions(db, vertical, MAX_REGIONS_PER_RUN)
+    print(f"[lead_hunter] vertical={vertical} regions={regions}")
 
     existing_domains = {
         row["domain"]
         for row in db.table("outreach_leads").select("domain").eq("vertical", vertical).execute().data
     }
 
-    inserted = 0
-    for brand_name in names:
-        verified = verify_candidate(vertical, brand_name, region)
-        if not verified:
-            continue
+    regions_processed: list[str] = []
+    total_inserted = 0
 
-        domain = verified["domain"].strip().lower()
-        if not domain or domain in existing_domains:
-            continue
-        existing_domains.add(domain)
+    for region in regions:
+        print(f"[lead_hunter] --- region={region} ---")
+        failures_before = get_ddg_failure_count()
 
-        row = {
-            "vertical": vertical,
-            "brand_name": brand_name,
-            "domain": domain,
-            "region": region,
-            "website_url": verified.get("website_url"),
-            "status": "researched",
-        }
-        if vertical == "combat_sports":
-            sub_type = verified.get("sub_type")
-            if sub_type in ("core_gym", "shop_distributor", "small_brand"):
-                row["sub_type"] = sub_type
+        names = discover_names(vertical, region)
+        print(f"[lead_hunter] discovered {len(names)} candidate names: {names}")
 
-        db.table("outreach_leads").insert(row).execute()
-        inserted += 1
-        print(f"[lead_hunter] verified + inserted {brand_name!r} -> {domain}")
+        inserted_this_region = 0
+        for brand_name in names:
+            verified = verify_candidate(vertical, brand_name, region)
+            if not verified:
+                continue
 
-    now = datetime.now(timezone.utc).isoformat()
-    db.table("regions_covered").upsert(
-        {
-            "vertical": vertical,
-            "region": region,
-            "last_searched_at": now,
-            "leads_found_count": inserted,
-        },
-        on_conflict="vertical,region",
-    ).execute()
+            domain = verified["domain"].strip().lower()
+            if not domain or domain in existing_domains:
+                continue
+            existing_domains.add(domain)
 
-    print(f"[lead_hunter] inserted {inserted} new leads for region={region}")
-    return inserted
+            row = {
+                "vertical": vertical,
+                "brand_name": brand_name,
+                "domain": domain,
+                "region": region,
+                "website_url": verified.get("website_url"),
+                "status": "researched",
+            }
+            if vertical == "combat_sports":
+                sub_type = verified.get("sub_type")
+                if sub_type in ("core_gym", "shop_distributor", "small_brand"):
+                    row["sub_type"] = sub_type
+
+            db.table("outreach_leads").insert(row).execute()
+            inserted_this_region += 1
+            total_inserted += 1
+            print(f"[lead_hunter] verified + inserted {brand_name!r} -> {domain}")
+
+        now = datetime.now(timezone.utc).isoformat()
+        db.table("regions_covered").upsert(
+            {
+                "vertical": vertical,
+                "region": region,
+                "last_searched_at": now,
+                "leads_found_count": inserted_this_region,
+                "ddg_failures": get_ddg_failure_count() - failures_before,
+            },
+            on_conflict="vertical,region",
+        ).execute()
+        regions_processed.append(region)
+
+        print(
+            f"[lead_hunter] region={region} inserted={inserted_this_region} "
+            f"(run total={total_inserted})"
+        )
+
+        if total_inserted >= QUALIFIED_TARGET_PER_RUN:
+            print(
+                f"[lead_hunter] reached {QUALIFIED_TARGET_PER_RUN} qualified leads this "
+                f"run, stopping early ({len(regions_processed)}/{len(regions)} regions processed)"
+            )
+            break
+
+    result = {
+        "regions_processed": regions_processed,
+        "leads_inserted": total_inserted,
+        "ddg_failures": get_ddg_failure_count(),
+    }
+    print(f"[lead_hunter] run complete: {result}")
+    return result
 
 
 if __name__ == "__main__":

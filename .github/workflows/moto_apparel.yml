@@ -3,7 +3,10 @@ name: moto_apparel daily pipeline
 on:
   workflow_dispatch: {}
   schedule:
-    - cron: "0 6 * * *"
+    - cron: "0 2 * * *"
+    - cron: "0 8 * * *"
+    - cron: "0 14 * * *"
+    - cron: "0 20 * * *"
 
 jobs:
   run-pipeline:

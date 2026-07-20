@@ -15,18 +15,26 @@ send manually each morning. This is a permanent design constraint, not a placeho
 ## Architecture
 
 Five stages, one script each, run in order by the two GitHub Actions workflows
-(`.github/workflows/moto_apparel.yml`, `combat_sports.yml`, staggered 6am/9am UTC cron).
-Each workflow runs `scripts/healthcheck.py` first — a real Groq call, Supabase query, and
-Gmail OAuth refresh. Individual pipeline stages intentionally catch and log per-lead
-failures rather than crashing (one bad lead shouldn't kill a whole day's run), which means
-a fully invalid/expired credential could otherwise produce five green checkmarks while
-silently doing nothing useful all day. The health check fails the whole job loudly and
-immediately instead, before any real stage runs, and names exactly which credential broke.
+(`.github/workflows/moto_apparel.yml` at 02/08/14/20 UTC, `combat_sports.yml` at
+04/10/16/22 UTC — 4 runs/day each, staggered 2 hours apart so they never fire at the same
+minute). Each workflow runs `scripts/healthcheck.py` first — a real Groq call, Supabase
+query, and Gmail OAuth refresh. Individual pipeline stages intentionally catch and log
+per-lead failures rather than crashing (one bad lead shouldn't kill a whole day's run),
+which means a fully invalid/expired credential could otherwise produce five green
+checkmarks while silently doing nothing useful all day. The health check fails the whole
+job loudly and immediately instead, before any real stage runs, and names exactly which
+credential broke.
 
-1. `scripts/lead_hunter.py` — rotates through regions (least-recently-covered first, see
-   `scripts/common/regions.py`), runs a free DuckDuckGo search and hands the results to
-   Groq (free LLM, no card) to extract candidate leads, dedups by `(vertical, domain)`,
-   inserts as `status='researched'`.
+1. `scripts/lead_hunter.py` — processes up to 4 regions per run (least-recently-covered
+   first, see `scripts/common/regions.py` and `pick_regions()`), stopping early if 20
+   qualified leads get inserted before all 4 are done. Per region: a free DuckDuckGo
+   search hands results to Groq (free LLM, no card) to extract up to 15 candidate names,
+   each gets a second targeted search to resolve and verify their real domain. Dedups by
+   `(vertical, domain)`, inserts as `status='researched'`. Target: ~30 drafted/day/vertical
+   across the day's 4 runs — actual yield depends on real candidate availability.
+   `ddg_search()` retries once after a 5s wait on failure and paces itself with a fixed
+   1.5s delay between calls; persistent failures are tracked per-region in
+   `regions_covered.ddg_failures` and surfaced by `daily_summary.py` if nonzero.
 2. `scripts/enricher.py` — for each researched lead, pulls 1-2 genuine specifics from
    their site/social and looks for a real published email. No email found →
    `status='skipped_no_email'`, stops there (never proceeds to Copywriter).

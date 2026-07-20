@@ -3,7 +3,10 @@ name: combat_sports daily pipeline
 on:
   workflow_dispatch: {}
   schedule:
-    - cron: "0 9 * * *"
+    - cron: "0 4 * * *"
+    - cron: "0 10 * * *"
+    - cron: "0 16 * * *"
+    - cron: "0 22 * * *"
 
 jobs:
   run-pipeline:

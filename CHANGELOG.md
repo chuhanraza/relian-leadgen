@@ -1,5 +1,44 @@
 # Changelog
 
+## 2026-07-21 — Scale Lead Hunter toward ~30 drafted leads/day/vertical
+
+Scaled Lead Hunter to 4 regions/run x 15 candidates/region x 4 runs/day per vertical (up
+from 1x1x1) — target ~30 drafted/day/vertical. Actual yield depends on real candidate
+availability and will need a few days of real data to confirm it's hitting target.
+
+- `scripts/common/web_search.py` — `ddg_search()` now retries once after a 5s wait on
+  failure, sleeps 1.5s after every call as fixed pacing, and tracks failures via a
+  module-level counter (`get_ddg_failure_count()`/`reset_ddg_failure_count()`) instead of
+  silently returning `[]` indistinguishable from "no results found". Signature and return
+  type unchanged. Verified both the real success path and a simulated failure path
+  (mocked to force both attempts to raise) — timing and failure count both correct.
+- `scripts/lead_hunter.py` — `discover_names()` cap raised from 8 to 15 candidates.
+  `pick_next_region()` replaced with `pick_regions(db, vertical, n)`, same ranking logic
+  (uncovered regions first, then oldest `last_searched_at`) but returns up to n regions
+  in one pass, so there's no risk of repeating a region within the same run. `run()`
+  loops up to 4 regions, updates `regions_covered` after each one (not just once), stops
+  early once 20 qualified leads have been inserted this run, and now returns
+  `{"regions_processed": [...], "leads_inserted": N, "ddg_failures": N}` instead of a
+  plain int. Verified `pick_regions()` against real DB state (returns 4 distinct regions
+  per vertical, correctly ranked).
+- `leadgen.regions_covered` and `leadgen.daily_run_log` — new `ddg_failures integer not
+  null default 0` column on each, since `lead_hunter.py` and `daily_summary.py` run as
+  separate GitHub Actions steps (separate Python processes, no shared memory) — the
+  in-process failure counter can't be handed to daily_summary directly, so it's persisted
+  per-region and summed the same way daily_summary already sums `regions_covered_this_run`.
+- `scripts/daily_summary.py` — sums today's `ddg_failures` across `regions_covered` rows,
+  writes it to `daily_run_log`, and prints an explicit warning line if it's nonzero, so a
+  DuckDuckGo throttling problem shows up directly instead of just reading as "fewer leads
+  than usual" with no explanation.
+- Both workflow YAMLs — schedule changed from one cron entry to four, 6 hours apart,
+  staggered 2 hours between verticals: moto_apparel at 02/08/14/20 UTC, combat_sports at
+  04/10/16/22 UTC. Validated both files with a real YAML parser — 4 entries each,
+  confirmed correct.
+- **Not verified**: a full live 4-region run (would burn significant real Groq/DDG call
+  volume — up to ~4 regions x 16 searches x 1.5-6.5s pacing/retry each — without being
+  requested). Each individual piece (region picking, DDG retry/pacing/failure-tracking,
+  YAML syntax) was verified directly instead.
+
 ## 2026-07-21 — Cron investigation + pre-flight healthcheck step
 
 Investigated why neither scheduled workflow had fired automatically yet. Root cause:

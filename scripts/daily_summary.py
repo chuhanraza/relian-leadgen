@@ -53,12 +53,13 @@ def run(vertical: str) -> None:
     )
     regions = (
         db.table("regions_covered")
-        .select("region")
+        .select("region, ddg_failures")
         .eq("vertical", vertical)
         .gte("last_searched_at", today)
         .execute()
         .data
     )
+    ddg_failures_today = sum(r.get("ddg_failures") or 0 for r in regions)
 
     row = {
         "vertical": vertical,
@@ -68,9 +69,17 @@ def run(vertical: str) -> None:
         "leads_skipped_no_email": skipped.count or 0,
         "leads_excluded_wrong_type": excluded.count or 0,
         "regions_covered_this_run": [r["region"] for r in regions],
+        "ddg_failures": ddg_failures_today,
     }
     db.table("daily_run_log").insert(row).execute()
     print(f"[daily_summary] {row}")
+
+    if ddg_failures_today > 0:
+        print(
+            f"[daily_summary] WARNING: {ddg_failures_today} DuckDuckGo search(es) failed "
+            f"today after retry — possible throttling. Check regions_covered.ddg_failures "
+            f"for {vertical} if leads_found looks low."
+        )
 
 
 if __name__ == "__main__":
