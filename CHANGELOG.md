@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-07-20 — Catalogue image attachments + per-vertical From address
+
+- `outreach_leads.catalogue_images text[]` added. Copywriter now also picks 1-2 relevant
+  product photo filenames per lead (text-only reasoning over pre-written descriptions,
+  since Groq isn't vision-capable) from `config/catalogue_<vertical>.json`; Sender
+  attaches the actual files from `assets/catalogue/<vertical>/`.
+- 7 moto_apparel images (Anger-brand jackets + armored/mesh gloves) and 9 combat_sports
+  images (MMA grappling gloves, several colorways/private-label variants) sourced from
+  Hamad's real Google Drive catalogue and manually reviewed/tagged before inclusion.
+- `gmail_client.create_draft()` now supports `attachment_paths` (MIMEMultipart +
+  MIMEImage) and `from_email`. Verified live: `hm@relianmfg.com` and
+  `hm@reliansports.com` are both confirmed working "send as" aliases on
+  relianmfg@gmail.com — `sender.py` now sends moto_apparel drafts from the former and
+  combat_sports from the latter instead of the raw Gmail address.
+- Verified live end-to-end: image selection correctly matched a lead's specific detail
+  (D30 Ghost armour → picked an armored-knuckle glove photo over a plain jacket), and a
+  real test draft confirmed both the attachment and the custom From address landed
+  correctly in Gmail.
+
 ## 2026-07-20 — Initial build: moto_apparel + combat_sports lead-gen pipeline
 
 - New `leadgen` Postgres schema inside the existing `relian-erp` Supabase project

@@ -26,8 +26,12 @@ Five stages, one script each, run in order by the two GitHub Actions workflows
    `status='skipped_no_email'`, stops there (never proceeds to Copywriter).
 3. `scripts/copywriter.py` — drafts a short pitch referencing the actual research detail.
    Technical claims come only from `config/real_specs_<vertical>.json`, only if
-   `verified_by_hamad: true` (see below).
-4. `scripts/sender.py` — creates a Gmail **draft** (never sends) for each drafted lead.
+   `verified_by_hamad: true` (see below). Also picks 1-2 relevant product photos from
+   `config/catalogue_<vertical>.json` (see "Catalogue images" below).
+4. `scripts/sender.py` — creates a Gmail **draft** (never sends) for each drafted lead,
+   from the vertical's own alias (`hm@relianmfg.com` for moto_apparel,
+   `hm@reliansports.com` for combat_sports — both confirmed verified send-as aliases on
+   relianmfg@gmail.com), with the Copywriter's picked photos attached.
 5. `scripts/daily_summary.py` — logs the day's counts to `leadgen.daily_run_log`.
 
 Data lives in a new `leadgen` schema inside the existing **relian-erp** Supabase project
@@ -99,6 +103,20 @@ claims about your own manufacturing.
 To unlock real technical claims: fill in `materials` (e.g. actual leather/synthetic/
 laminate specs you use), `certifications_or_benchmarks`, `moq_and_lead_time`, then set
 `verified_by_hamad: true`. Only you can flip that flag — it's a deliberate manual gate.
+
+## Catalogue images
+
+`config/catalogue_moto_apparel.json` and `config/catalogue_combat_sports.json` each list
+the product photos in `assets/catalogue/<vertical>/` with a short description (written by
+looking at each photo once — the text model that drafts emails can't see images). For
+every lead, the Copywriter asks Groq to pick the 1-2 most relevant filenames from that
+list based on the lead's `research_notes`, stores them in `catalogue_images`, and the
+Sender attaches the actual files. Sourced from Hamad's real Google Drive catalogue
+(`Cataloge/Anger Volume` for moto_apparel — "Anger" is Relian's own motorcycle brand —
+and `Cataloge/MMA` for combat_sports). To add more: drop a jpg in the right folder, add a
+`{"filename": ..., "description": ...}` entry describing what's actually in it, done — no
+code changes needed. Keep individual files well under ~5MB; Gmail rejects attachments
+whose total encoded size exceeds ~25MB.
 
 ## Sender reconciliation — known tradeoff
 
