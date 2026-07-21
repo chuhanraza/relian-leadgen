@@ -1,10 +1,12 @@
 """Stage 3: Copywriter.
 
-Only runs on leads with a real found email. combat_sports uses a deterministic
-template built from config/real_specs_combat_sports.json (Hamad's real example
-structure) with the LLM scoped to ONLY the opening personalization line, so the
-three named models, subject, and CTA never drift from what's verified. moto_apparel
-still uses the older open-ended prompt pending its own spec verification.
+Only runs on leads with a real found email. Both verticals now use a deterministic
+template built from their config/real_specs_*.json (Hamad's real, verified specs)
+with the LLM scoped to ONLY the opening personalization line, so the rest of the
+email (subject, philosophy/models, CTA, signoff) never drifts from what's verified.
+PROMPT_VERIFIED/PROMPT_UNVERIFIED remain as the defensive fallback path for a
+vertical that hasn't had a deterministic template built yet, or whose spec is
+unverified.
 
 Usage:
   python scripts/copywriter.py moto_apparel
@@ -34,7 +36,7 @@ ASSETS_DIR = BASE_DIR / "assets" / "catalogue"
 
 SIGNATURE = "\n\nHamad, Relian MFG"
 
-# ---------- moto_apparel: unchanged, still open-ended pending spec verification ----------
+# ---------- generic fallback: used by any vertical without a deterministic template ----------
 
 PROMPT_VERIFIED = """Write a short, specific cold outreach email pitching manufacturing
 partnership from Relian MFG (Sialkot, Pakistan) to {brand_name}.
@@ -193,6 +195,76 @@ def build_combat_sports_email(brand_name: str, research_notes: str, target_langu
     return template["subject"], body
 
 
+# ---------- moto_apparel: deterministic template (English only), LLM only writes the
+# opening line. Same firewall as combat_sports's English icebreaker — every generated
+# line is run through validate_icebreaker('en', ...) before use.
+
+MOTO_EMAIL_TEMPLATE_PATH = CONFIG_DIR / "email_templates_moto_apparel.json"
+
+MOTO_ICEBREAKER_PROMPT = """Write ONE short, plain sentence (max 25 words) opening a cold
+email to "{brand_name}". Ground it in this real detail if usable: "{research_notes}".
+Never imply their current supplier/product is inferior. If the detail isn't
+usable, write a soft honest opener instead. Output ONLY that one sentence."""
+
+
+def generate_moto_icebreaker(brand_name: str, research_notes: str) -> str:
+    prompt = MOTO_ICEBREAKER_PROMPT.format(brand_name=brand_name, research_notes=research_notes)
+
+    for _attempt in range(2):
+        text = generate(prompt, max_tokens=100).strip()
+        if validate_icebreaker("en", text):
+            return text
+
+    print(
+        f"[copywriter] moto icebreaker validation FAILED twice brand={brand_name!r} "
+        "— using safe fallback line"
+    )
+    return FALLBACK_ICEBREAKERS["en"]
+
+
+def load_moto_email_template() -> dict:
+    return json.loads(MOTO_EMAIL_TEMPLATE_PATH.read_text(encoding="utf-8"))
+
+
+def build_moto_apparel_email(brand_name: str, research_notes: str) -> tuple[str, str]:
+    template = load_moto_email_template()
+    specs = load_specs("moto_apparel")
+    opening = generate_moto_icebreaker(brand_name, research_notes)
+
+    leather = specs["leather"]
+    certifications = specs.get("certifications") or []
+    cert_line = (
+        f" We're {'; '.join(certifications)}, if that's useful context."
+        if certifications
+        else ""
+    )
+    leather_paragraph = (
+        "At Relian MFG, we believe that making a glove is easy, but selecting the perfect "
+        f'"spices" for the dish is the true art. We specialize in {leather["name"]} and '
+        "have a dedicated team that strictly inspects and analyzes every hide before "
+        "production. This ensures the leather maintains its dignity, strength, and "
+        f"longevity for your riders.{cert_line}"
+    )
+
+    value_prop_lines = []
+    for vp in specs["value_props"]:
+        label, rest = vp.split(":", 1)
+        value_prop_lines.append(f"- **{label.strip()}:** {rest.strip()}")
+    value_props_block = "\n".join(value_prop_lines)
+
+    body = (
+        f"{template['greeting']},\n\n"
+        f"{opening}\n\n"
+        f"{template['philosophy']}\n\n"
+        f"{leather_paragraph}\n\n"
+        "Beyond our craftsmanship, we back our production with:\n\n"
+        f"{value_props_block}\n\n"
+        f"{template['cta']}\n\n"
+        f"{template['signoff']}"
+    )
+    return template["subject"], body
+
+
 # ---------- shared: image selection ----------
 
 IMAGE_SELECT_PROMPT = """A lead named "{brand_name}" is getting a manufacturing pitch email.
@@ -265,6 +337,8 @@ def run(vertical: str) -> None:
                 subject, body = build_combat_sports_email(
                     lead["brand_name"], lead["research_notes"], target_language
                 )
+            elif vertical == "moto_apparel" and verified:
+                subject, body = build_moto_apparel_email(lead["brand_name"], lead["research_notes"])
             elif verified:
                 prompt = PROMPT_VERIFIED.format(
                     brand_name=lead["brand_name"],

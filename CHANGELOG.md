@@ -1,5 +1,41 @@
 # Changelog
 
+## 2026-07-21 — moto_apparel deterministic template, English only
+
+Brings moto_apparel to parity with combat_sports's approach: real verified specs +
+a deterministic template, with the LLM scoped to ONLY the one-sentence icebreaker.
+No multilingual work here — that stays scoped to combat_sports for now.
+
+- **`config/real_specs_moto_apparel.json`** replaced with Hamad's verified specs:
+  leather (Premium Natural Leather, hide-inspection process), two value props
+  (ERP-integrated tracking, transparent/open costing), and two certifications (SGS
+  Approved Report No. 151756704; Alibaba Verified/Trustpass). `verified_by_hamad`
+  flipped to `true`.
+
+- **`config/email_templates_moto_apparel.json`** (new): single English entry —
+  subject, greeting, philosophy line, CTA, signoff. Deliberately a flat structure,
+  not the per-language shape `email_templates_combat_sports.json` uses — moto_apparel
+  has exactly one language, so there's no per-language dict to merge into.
+
+- **`scripts/copywriter.py`**: added `build_moto_apparel_email()`, following the
+  same pattern as `build_combat_sports_email()` — a new `MOTO_ICEBREAKER_PROMPT`
+  generates only the opening sentence, run through the same `validate_icebreaker('en', ...)`
+  firewall already guarding combat_sports's English icebreaker, so an off-register or
+  hallucinated line never ships. Everything else (philosophy, leather paragraph,
+  value props, certifications mention, CTA, signoff) is rendered straight from config
+  — no LLM involvement, no drift from what's verified. `run()` now dispatches to it
+  whenever `vertical == "moto_apparel"` and `verified_by_hamad` is `True`, instead of
+  the old open-ended `PROMPT_VERIFIED` path. `PROMPT_VERIFIED`/`PROMPT_UNVERIFIED`
+  stay in place as the defensive fallback for a vertical without its own template yet,
+  or an unverified spec — kept for the (now impossible, but worth guarding) case where
+  `verified_by_hamad` flips back to `false`.
+
+- **Catalogue**: no change needed — `config/catalogue_moto_apparel.json` and the 7
+  real glove/jacket photos in `assets/catalogue/moto_apparel/` already exist from the
+  2026-07-20 build (unlike combat_sports at that point, moto_apparel's photos were
+  already in hand); `load_catalogue()`'s existing missing-file handling was never
+  exercised here.
+
 ## 2026-07-21 — Split Groq key per vertical, cheaper model for low-stakes calls
 
 The two verticals were competing for one shared Groq free-tier token budget (100K TPD),
