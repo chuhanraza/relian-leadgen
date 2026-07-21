@@ -191,27 +191,34 @@ def run(vertical: str) -> None:
     print(f"[copywriter] vertical={vertical} pending={len(leads)} verified_by_hamad={verified}")
 
     for lead in leads:
-        notes_suffix = ""
+        try:
+            notes_suffix = ""
 
-        if vertical == "combat_sports" and verified:
-            subject, body = build_combat_sports_email(lead["brand_name"], lead["research_notes"], specs)
-        elif verified:
-            prompt = PROMPT_VERIFIED.format(
-                brand_name=lead["brand_name"],
-                research_notes=lead["research_notes"],
-                specs_json=json.dumps(specs, indent=2),
-            )
-            body = generate(prompt).strip() + SIGNATURE
-            subject = SUBJECT_TEMPLATES[vertical].format(brand_name=lead["brand_name"])
-        else:
-            prompt = PROMPT_UNVERIFIED.format(
-                brand_name=lead["brand_name"], research_notes=lead["research_notes"]
-            )
-            body = generate(prompt).strip() + SIGNATURE
-            subject = SUBJECT_TEMPLATES.get(vertical, "Manufacturing partner for {brand_name}?").format(
-                brand_name=lead["brand_name"]
-            )
-            notes_suffix = " AWAITING SPEC VERIFICATION."
+            if vertical == "combat_sports" and verified:
+                subject, body = build_combat_sports_email(
+                    lead["brand_name"], lead["research_notes"], specs
+                )
+            elif verified:
+                prompt = PROMPT_VERIFIED.format(
+                    brand_name=lead["brand_name"],
+                    research_notes=lead["research_notes"],
+                    specs_json=json.dumps(specs, indent=2),
+                )
+                body = generate(prompt).strip() + SIGNATURE
+                subject = SUBJECT_TEMPLATES[vertical].format(brand_name=lead["brand_name"])
+            else:
+                prompt = PROMPT_UNVERIFIED.format(
+                    brand_name=lead["brand_name"], research_notes=lead["research_notes"]
+                )
+                body = generate(prompt).strip() + SIGNATURE
+                subject = SUBJECT_TEMPLATES.get(
+                    vertical, "Manufacturing partner for {brand_name}?"
+                ).format(brand_name=lead["brand_name"])
+                notes_suffix = " AWAITING SPEC VERIFICATION."
+        except Exception as exc:  # noqa: BLE001 — e.g. Groq rate limit; retry next run, don't
+            # crash the whole job and skip every remaining lead plus the Sender/Summary steps.
+            print(f"[copywriter] failed for {lead['domain']}: {exc}")
+            continue
 
         images = select_images(vertical, lead["brand_name"], lead["research_notes"], catalogue)
 

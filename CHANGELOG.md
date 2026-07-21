@@ -1,5 +1,35 @@
 # Changelog
 
+## 2026-07-21 — Fix Copywriter crash-cascade; found Groq daily token limit is the real ceiling
+
+First real scheduled run under the new 4x/16x scaling (moto_apparel, `run #2`) failed at
+the Copywriter step. Root cause, reproduced directly against the actual leads that
+triggered it: **Groq's free-tier daily token limit for `llama-3.3-70b-versatile` (100,000
+tokens/day) was nearly exhausted by a single moto_apparel run** —
+`Used 99586`/`100000` per the actual error. Lead Hunter's own heavy per-run usage (up to
+4 regions x 15 candidates x 1 verify call each, each with sizeable page-text context) plus
+Enricher plus Copywriter now burns close to the whole day's shared token budget in one
+vertical's one run — and it's a shared budget: both verticals use the same `GROQ_API_KEY`.
+
+Real bug this exposed and fixed: `copywriter.py`'s main draft-writing `generate()` call had
+no error handling (unlike `enricher.py` and `select_images()`, which already do) — one
+Groq failure crashed the entire script immediately, skipping every remaining lead in the
+loop AND the Sender/Daily-Summary steps after it (they showed `skipped` in the run, not
+`failure`, but nothing useful happened for the rest of that day). Wrapped the per-lead
+drafting logic in the same try/except pattern already used elsewhere: a failed lead is
+logged and left in `status='researched'` to retry next run, instead of crashing the whole
+job. Verified live: rerunning against the actual still-pending lead now logs the failure
+and exits cleanly (0) instead of crashing.
+
+**Not fixed, flagged for Hamad to decide**: the underlying token-budget ceiling itself.
+At the current 4x16x scale, one vertical's one run can consume nearly the entire shared
+daily Groq token budget, which means combat_sports' scheduled runs today are likely to hit
+the same wall, and the ~30/day/vertical target is probably not achievable within Groq's
+free 100k-tokens/day limit as currently scaled. See session discussion for options (scale
+back down, reduce per-call context/prompt size, spread verticals across separate Groq
+accounts, accept partial daily throughput) — no unilateral change made to the scaling
+parameters shipped in the prior entry, since that's a real tradeoff decision, not a bug.
+
 ## 2026-07-21 — Scale Lead Hunter toward ~30 drafted leads/day/vertical
 
 Scaled Lead Hunter to 4 regions/run x 15 candidates/region x 4 runs/day per vertical (up
