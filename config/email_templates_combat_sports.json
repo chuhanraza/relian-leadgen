@@ -1,0 +1,62 @@
+{
+  "en": {
+    "subject": "Question regarding hand wraps stock",
+    "greeting": "Hi Sir / Madam,",
+    "intro": "We manufacture private label \"Boutique-Grade\" wraps for brands that want to dominate the market. We have multiple specialized models ready for your 2026 collection:",
+    "models": [
+      "**Heritage (Cotton-Blend):** Heavy-duty fabric with a stitched leather patch for luxury branding",
+      "**Pro-Stretch:** Elastic-cotton weave with 3D silicon printing that won't peel",
+      "**Hygiene Kit:** Comes packaged in a mesh wash-bag, solves the tangled-wrap problem"
+    ],
+    "cta": "Do you have 5 minutes this week to discuss which model fits your brand? I would share my full catalogue once you request.",
+    "signoff": "Hamad, Relian MFG"
+  },
+  "de": {
+    "subject": "Frage zum Sortiment an Handbandagen",
+    "greeting": "Sehr geehrte Damen und Herren,",
+    "intro": "Wir fertigen Private-Label-Handbandagen in „Boutique-Qualität“ für Marken, die sich im Markt abheben möchten. Für Ihre Kollektion 2026 stehen mehrere spezialisierte Modelle zur Verfügung:",
+    "models": [
+      "**Heritage (Baumwollmischung):** Robustes Gewebe mit aufgenähtem Lederpatch für hochwertiges Branding",
+      "**Pro-Stretch:** Elastisches Baumwollgewebe mit 3D-Silikondruck, der sich nicht ablöst",
+      "**Hygiene-Kit:** Verpackt in einem Mesh-Waschbeutel, löst das Problem verknoteter Bandagen"
+    ],
+    "cta": "Hätten Sie diese Woche 5 Minuten Zeit, um zu besprechen, welches Modell zu Ihrer Marke passt? Gerne teile ich unseren vollständigen Katalog auf Anfrage.",
+    "signoff": "Mit freundlichen Grüßen,\nHamad, Relian MFG"
+  },
+  "fr": {
+    "subject": "Question concernant votre stock de bandes de boxe",
+    "greeting": "Madame, Monsieur,",
+    "intro": "Nous fabriquons des bandes de boxe « qualité boutique » en marque privée pour les marques qui souhaitent se démarquer sur le marché. Plusieurs modèles spécialisés sont disponibles pour votre collection 2026 :",
+    "models": [
+      "**Heritage (mélange coton) :** Tissu robuste avec patch en cuir cousu pour un branding haut de gamme",
+      "**Pro-Stretch :** Tissage coton élastique avec impression silicone 3D qui ne se décolle pas",
+      "**Kit Hygiène :** Livré dans une pochette en filet, résout le problème des bandes emmêlées"
+    ],
+    "cta": "Auriez-vous 5 minutes cette semaine pour discuter du modèle le mieux adapté à votre marque ? Je serais ravi de partager notre catalogue complet sur demande.",
+    "signoff": "Cordialement,\nHamad, Relian MFG"
+  },
+  "es": {
+    "subject": "Consulta sobre su stock de vendas de boxeo",
+    "greeting": "Estimados señores:",
+    "intro": "Fabricamos vendas de boxeo de marca privada, calidad boutique, para marcas que desean destacar en el mercado. Contamos con varios modelos especializados listos para su colección 2026:",
+    "models": [
+      "**Heritage (mezcla de algodón):** Tejido resistente con parche de cuero cosido para un branding de lujo",
+      "**Pro-Stretch:** Tejido elástico de algodón con impresión de silicona 3D que no se despega",
+      "**Kit de Higiene:** Viene en una bolsa de malla, resuelve el problema de las vendas enredadas"
+    ],
+    "cta": "¿Tendría 5 minutos esta semana para hablar sobre qué modelo se adapta mejor a su marca? Con gusto compartiré nuestro catálogo completo si lo solicita.",
+    "signoff": "Atentamente,\nHamad, Relian MFG"
+  },
+  "it": {
+    "subject": "Richiesta informazioni sulle fasce da boxe",
+    "greeting": "Gentile Signora/Signore,",
+    "intro": "Produciamo fasce da boxe a marchio privato, qualità boutique, per marchi che vogliono distinguersi sul mercato. Sono disponibili diversi modelli specializzati per la collezione 2026:",
+    "models": [
+      "**Heritage (misto cotone):** Tessuto resistente con toppa in pelle cucita per un branding di pregio",
+      "**Pro-Stretch:** Tessuto elastico in cotone con stampa siliconica 3D che non si stacca",
+      "**Kit Igiene:** Confezionato in una sacca in rete, risolve il problema delle fasce aggrovigliate"
+    ],
+    "cta": "Avrebbe 5 minuti questa settimana per discutere quale modello si adatta meglio al suo marchio? Sarò lieto di condividere il catalogo completo su richiesta.",
+    "signoff": "Cordiali saluti,\nHamad, Relian MFG"
+  }
+}

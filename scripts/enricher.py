@@ -2,9 +2,11 @@
 
 For every status='researched' lead that hasn't been enriched yet (research_notes IS NULL),
 fetches the brand's actual site + a DuckDuckGo search for their contact info, pulls 1-2
-genuine specific details, and attempts to find a real published contact email. Never
-guesses an email pattern — no email found means status='skipped_no_email' and the lead
-does not proceed to the Copywriter.
+genuine specific details, and attempts to find a real published contact email. If that
+primary route finds nothing, falls back to common.contact_discovery's waterfall (Overpass
+-> Facebook dork -> Instagram/Linktree) before giving up. Never guesses an email pattern —
+no email found anywhere means status='skipped_no_email' and the lead does not proceed to
+the Copywriter.
 
 Usage:
   python scripts/enricher.py moto_apparel
@@ -15,6 +17,7 @@ import sys
 
 from dotenv import load_dotenv
 
+from common.contact_discovery import discover_contact
 from common.db import get_client
 from common.groq_client import generate
 from common.parsing import extract_json
@@ -94,6 +97,29 @@ def run(vertical: str) -> None:
                     "contact_method": "email",
                 }
             ).eq("id", lead["id"]).execute()
+            print(f"[enricher] {lead['domain']}: email_found=True (primary)")
+            continue
+
+        fallback = discover_contact(lead["brand_name"], lead["region"])
+        if fallback["email"]:
+            db.table("outreach_leads").update(
+                {
+                    "research_notes": notes,
+                    "contact_email": fallback["email"],
+                    "contact_method": "email",
+                }
+            ).eq("id", lead["id"]).execute()
+            print(f"[enricher] {lead['domain']}: email_found=True (fallback:{fallback['method']})")
+        elif fallback["facebook_url"]:
+            db.table("outreach_leads").update(
+                {
+                    "research_notes": f"{notes} Facebook page found: {fallback['facebook_url']}".strip(),
+                    "facebook_url": fallback["facebook_url"],
+                    "contact_method": "facebook_message_manual_needed",
+                    "status": "skipped_no_email",
+                }
+            ).eq("id", lead["id"]).execute()
+            print(f"[enricher] {lead['domain']}: email_found=False, facebook_url found instead")
         else:
             db.table("outreach_leads").update(
                 {
@@ -102,8 +128,7 @@ def run(vertical: str) -> None:
                     "status": "skipped_no_email",
                 }
             ).eq("id", lead["id"]).execute()
-
-        print(f"[enricher] {lead['domain']}: email_found={bool(email)}")
+            print(f"[enricher] {lead['domain']}: email_found=False, waterfall found nothing")
 
 
 if __name__ == "__main__":

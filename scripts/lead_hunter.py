@@ -80,8 +80,13 @@ Homepage text of the top likely match (may be empty if unfetchable):
 {page_text}
 
 1. Identify which result (if any) is their actual official website — not a marketplace,
-   review site, social media aggregator, or unrelated company. If none of the results look
-   like their real official site, say so.
+   review site, or unrelated company. If none of the results look like their real official
+   site, check whether one result is clearly this business's own Facebook Page (a business
+   Page, not a personal profile, group, or ad) — if so, that counts as their online
+   presence: set domain to "facebook.com/<pagename>" and website_url to the full Facebook
+   URL. Only say none was found if neither an official site nor a matching Facebook Page
+   turned up. Note: a Facebook Page's homepage text is never fetchable (login wall), so if
+   you accept one, base steps 2-3 on the search result snippets alone.
 2. Using the homepage text if available, verify: is this a BRAND (designs/sells apparel
    under its own label) rather than a manufacturer/wholesale distributor/OEM factory? If
    the homepage text says they ARE the manufacturer/factory for other brands, this fails.
@@ -115,7 +120,12 @@ Homepage text of the top likely match (may be empty if unfetchable):
 
 1. Identify which result (if any) is their actual official website — not a marketplace,
    review site, or unrelated company. If none of the results look like their real official
-   site, say so.
+   site, check whether one result is clearly this business's own Facebook Page (a business
+   Page, not a personal profile, group, or ad) — if so, that counts as their online
+   presence: set domain to "facebook.com/<pagename>" and website_url to the full Facebook
+   URL. Only say none was found if neither an official site nor a matching Facebook Page
+   turned up. Note: a Facebook Page's homepage text is never fetchable (login wall), so if
+   you accept one, base steps 2-4 on the search result snippets alone.
 2. Using the homepage text if available, confirm this is genuinely combat-sports related
    (boxing/MMA/Muay Thai/BJJ), not general fitness or a traditional non-combat dojo, and
    not based in Mainland China.
@@ -183,6 +193,8 @@ def verify_candidate(vertical: str, brand_name: str, region: str) -> dict | None
     ranked = sorted(results, key=lambda r: _name_match_score(brand_name, r["url"]), reverse=True)
     page_text = ""
     for r in ranked:
+        if "facebook.com" in r["url"].lower():
+            continue  # login wall — never fetch, the model relies on the snippet text instead
         page_text = fetch_page_text(r["url"])
         if page_text:
             break

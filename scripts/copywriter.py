@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +24,7 @@ from dotenv import load_dotenv
 from common.db import get_client
 from common.groq_client import generate
 from common.parsing import extract_json
+from common.regions import language_for_region
 
 load_dotenv()
 
@@ -76,56 +78,119 @@ SUBJECT_TEMPLATES = {
     "moto_apparel": "Manufacturing partner for {brand_name}?",
 }
 
-# ---------- combat_sports: deterministic template, LLM only writes the opening line ----------
+# ---------- combat_sports: deterministic template (per-language), LLM only writes the
+# opening line. DE/FR/ES/IT templates are AI-drafted, not yet native-speaker-reviewed —
+# see CHANGELOG. Every generated icebreaker is run through validate_icebreaker() below
+# before use, in every language, so an off-register or hallucinated line never ships.
 
-COMBAT_SUBJECT = "Question regarding hand wraps stock"
+EMAIL_TEMPLATES_PATH = CONFIG_DIR / "email_templates_combat_sports.json"
 
-COMBAT_OPENING_LINE_PROMPT = """A lead named "{brand_name}" is getting a cold outreach
-email about private-label hand wraps. Here's what we actually found out about them:
-"{research_notes}"
+ICEBREAKER_PROMPTS = {
+    "en": """Write ONE short, plain sentence (max 25 words) opening a cold
+email to "{brand_name}". Ground it in this real detail if usable: "{research_notes}".
+Never imply their current supplier/product is inferior. If the detail isn't
+usable, write a soft honest opener instead. Output ONLY that one sentence.""",
+    "de": """Schreiben Sie GENAU EINEN kurzen, sachlichen Satz (max. 25 Wörter)
+als Einstieg einer Geschäfts-E-Mail an "{brand_name}". Verwenden Sie AUSSCHLIESSLICH
+die formelle Anrede (Sie/Ihr/Ihnen) — niemals "du". Kein Marketing-Superlativ,
+kein "revolutionär". Beziehen Sie sich auf dieses reale Detail, falls brauchbar:
+"{research_notes}". Implizieren Sie NIEMALS, dass der aktuelle Lieferant/das
+Produkt minderwertig ist. Antworten Sie NUR mit diesem einen Satz.""",
+    "fr": """Écrivez EXACTEMENT une phrase courte et factuelle (max 25 mots)
+pour ouvrir un e-mail professionnel à "{brand_name}". Utilisez UNIQUEMENT le
+vouvoiement (vous/votre) — jamais "tu". Pas de superlatifs marketing, pas de
+"révolutionnaire". Appuyez-vous sur ce détail réel si utilisable :
+"{research_notes}". N'impliquez JAMAIS que leur fournisseur/produit actuel est
+inférieur. Répondez UNIQUEMENT avec cette phrase.""",
+    "es": """Escriba EXACTAMENTE una frase breve y objetiva (máximo 25 palabras)
+para abrir un correo profesional a "{brand_name}". Use ÚNICAMENTE el registro
+formal (usted/su) — nunca "tú". Sin superlativos de marketing, sin
+"revolucionario". Básese en este detalle real si es útil:
+"{research_notes}". NUNCA dé a entender que su proveedor/producto actual es
+inferior. Responda ÚNICAMENTE con esa frase.""",
+    "it": """Scriva ESATTAMENTE una frase breve e oggettiva (massimo 25 parole)
+per aprire un'email professionale a "{brand_name}". Usi SOLO il registro
+formale (Lei/Suo) — mai "tu". Nessun superlativo di marketing, nessun
+"rivoluzionario". Si basi su questo dettaglio reale se utile:
+"{research_notes}". Non implichi MAI che il fornitore/prodotto attuale sia
+inferiore. Risponda SOLO con quella frase.""",
+}
 
-Write ONE short, plain sentence (max 25 words) to open the email with, in the voice of
-someone who's looked at their business specifically, not a mass mailer. Ground it in the
-real detail above if it's genuinely usable. If the detail isn't specific/useful enough to
-build a real sentence from, write a soft, generic-but-honest opener instead — e.g.
-"I follow your brand and wanted to check whether your current hand wrap lineup has room
-for something new." NEVER assert that their current product or supplier is subpar, low
-quality, or outdated — we have no evidence of that and it reads as a lie if untrue.
+# Every language's forbidden-informal check, plus the length/script checks in
+# validate_icebreaker(), run on EVERY generated icebreaker regardless of language.
+FORBIDDEN_INFORMAL = {
+    "de": [" du ", " dich ", " dir ", " dein", " deine"],
+    "fr": [" tu ", " te ", " toi ", " ton ", " ta ", " tes "],
+    "es": [" tú ", " tuyo", " tuya"],
+    "it": [" tu ", " tuo", " tua", " tuoi", " tue"],
+}
 
-Output ONLY that one sentence. No quotes, no preamble, no signature.
-"""
+# Safe, honest, formal-register openers used only if two generation attempts both fail
+# validation — no personalization claim, so they're never a lie regardless of the lead.
+FALLBACK_ICEBREAKERS = {
+    "en": "I came across your business and wanted to reach out directly.",
+    "de": "Ich bin auf Ihr Unternehmen aufmerksam geworden und wollte Sie direkt kontaktieren.",
+    "fr": "Votre entreprise a attiré notre attention et nous souhaitions vous contacter directement.",
+    "es": "Conocimos su empresa y quisimos ponernos en contacto con usted directamente.",
+    "it": "Abbiamo scoperto la sua azienda e desideravamo contattarla direttamente.",
+}
 
 
-def build_combat_sports_email(brand_name: str, research_notes: str, specs: dict) -> tuple[str, str]:
-    opening = generate(
-        COMBAT_OPENING_LINE_PROMPT.format(brand_name=brand_name, research_notes=research_notes),
-        max_tokens=100,
-    ).strip()
+def validate_icebreaker(lang: str, text: str) -> bool:
+    if not text or len(text.strip()) < 10 or len(text.split()) > 40:
+        return False
+    if re.search(r"[Ѐ-ӿ一-鿿぀-ヿ]", text):
+        return False  # hallucinated Cyrillic/CJK/Japanese script
+    lowered = f" {text.lower()} "
+    for term in FORBIDDEN_INFORMAL.get(lang, []):
+        if term in lowered:
+            return False
+    return True
 
-    model_lines = []
-    for i, m in enumerate(specs.get("materials", []), start=1):
-        model_lines.append(f'{i}. **{m["name"]}:** {m["notes"]}')
-    models_block = "\n".join(model_lines)
 
+def generate_icebreaker(brand_name: str, research_notes: str, lang: str) -> str:
+    prompt = ICEBREAKER_PROMPTS[lang].format(brand_name=brand_name, research_notes=research_notes)
+
+    for _attempt in range(2):
+        text = generate(prompt, max_tokens=100).strip()
+        if validate_icebreaker(lang, text):
+            return text
+
+    print(
+        f"[copywriter] icebreaker validation FAILED twice for lang={lang!r} "
+        f"brand={brand_name!r} — using safe fallback line"
+    )
+    return FALLBACK_ICEBREAKERS[lang]
+
+
+def load_email_templates() -> dict:
+    return json.loads(EMAIL_TEMPLATES_PATH.read_text(encoding="utf-8"))
+
+
+def build_combat_sports_email(brand_name: str, research_notes: str, target_language: str) -> tuple[str, str]:
+    template = load_email_templates()[target_language]
+    opening = generate_icebreaker(brand_name, research_notes, target_language)
+
+    models_block = "\n".join(f"{i}. {m}" for i, m in enumerate(template["models"], start=1))
+
+    # Lookbook attachment mention only exists in English so far — never carried into the
+    # DE/FR/ES/IT templates untranslated, since that would leak English into the email.
     lookbook_path = ASSETS_DIR / "lookbook_hand_wraps.pdf"
     next_step_line = (
         "\n\n**Next Step:** I have attached our Lookbook for hand wraps."
-        if lookbook_path.exists()
+        if target_language == "en" and lookbook_path.exists()
         else ""
     )
 
     body = (
-        f"Hi Sir / Madam,\n\n"
+        f"{template['greeting']}\n\n"
         f"{opening}\n\n"
-        f'We manufacture private label "Boutique-Grade" wraps for brands that want to '
-        f"dominate the market. We have multiple specialized models ready for your 2026 "
-        f"collection:\n\n{models_block}"
+        f"{template['intro']}\n\n{models_block}"
         f"{next_step_line}\n\n"
-        f"Do you have 5 minutes this week to discuss which model fits your brand? "
-        f"I would share my full catalogue once you request."
-        f"{SIGNATURE}"
+        f"{template['cta']}"
+        f"\n\n{template['signoff']}"
     )
-    return COMBAT_SUBJECT, body
+    return template["subject"], body
 
 
 # ---------- shared: image selection ----------
@@ -193,10 +258,12 @@ def run(vertical: str) -> None:
     for lead in leads:
         try:
             notes_suffix = ""
+            target_language = None
 
             if vertical == "combat_sports" and verified:
+                target_language = language_for_region(lead["region"])
                 subject, body = build_combat_sports_email(
-                    lead["brand_name"], lead["research_notes"], specs
+                    lead["brand_name"], lead["research_notes"], target_language
                 )
             elif verified:
                 prompt = PROMPT_VERIFIED.format(
@@ -222,18 +289,20 @@ def run(vertical: str) -> None:
 
         images = select_images(vertical, lead["brand_name"], lead["research_notes"], catalogue)
 
-        db.table("outreach_leads").update(
-            {
-                "draft_subject": subject,
-                "draft_body": body,
-                "catalogue_images": images,
-                "research_notes": lead["research_notes"] + notes_suffix,
-                "status": "drafted",
-                "drafted_at": datetime.now(timezone.utc).isoformat(),
-            }
-        ).eq("id", lead["id"]).execute()
+        update_payload = {
+            "draft_subject": subject,
+            "draft_body": body,
+            "catalogue_images": images,
+            "research_notes": lead["research_notes"] + notes_suffix,
+            "status": "drafted",
+            "drafted_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if target_language:
+            update_payload["target_language"] = target_language
 
-        print(f"[copywriter] drafted {lead['domain']} images={images}")
+        db.table("outreach_leads").update(update_payload).eq("id", lead["id"]).execute()
+
+        print(f"[copywriter] drafted {lead['domain']} images={images} target_language={target_language}")
 
 
 if __name__ == "__main__":

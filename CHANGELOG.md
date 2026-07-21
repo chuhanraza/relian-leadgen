@@ -1,5 +1,64 @@
 # Changelog
 
+## 2026-07-21 — Contact-discovery waterfall, Facebook Pages as valid targets, DE/FR/ES/IT templates
+
+Three additions, all additive to the existing pipeline:
+
+- **Contact-discovery waterfall** (`scripts/common/contact_discovery.py`): when Enricher's
+  primary route (homepage fetch + DDG search + Groq extraction) finds no email, it now
+  falls back through OpenStreetMap Overpass API (free, no key) → a DuckDuckGo
+  `site:facebook.com` dork that regexes any published email out of indexed snippet text
+  (never fetches facebook.com directly — it's a login wall) → an Instagram-bio search that
+  follows an exposed Linktree/Beacons link if one appears (those are plain static pages,
+  safe to fetch). Every stage is best-effort and falls through silently on failure; the
+  waterfall still never invents a pattern email — `discover_contact()` returns `email: None`
+  if nothing real was found, same contract as the primary route. If the waterfall finds a
+  Facebook Page but no email, the lead now gets `contact_method='facebook_message_manual_needed'`
+  (a new value, distinct from the existing `contact_form_manual_needed`) with the page URL
+  saved to both the new `facebook_url` column and appended to `research_notes`, so Hamad's
+  team can go message the page directly instead of the lead being an undifferentiated
+  "skipped, no way to reach them."
+
+- **Facebook Pages accepted as Lead Hunter targets** (`scripts/lead_hunter.py`): previously
+  a candidate with no discoverable official website was disqualified outright.
+  `verify_candidate()` now accepts a clearly-matching Facebook business Page as the
+  candidate's online presence — `domain` becomes `facebook.com/<pagename>`, `website_url`
+  the full Facebook URL — and never calls `fetch_page_text()` on a facebook.com result
+  (login wall, would just poison the prompt with garbage). The verify prompt for both
+  verticals now explicitly bases steps 2+ on the DDG search snippets alone when working
+  from a Facebook Page match, since there's no fetchable homepage text for it.
+
+- **Real multilingual combat_sports templates — German, French, Spanish, Italian only**
+  (`config/email_templates_combat_sports.json`): `scripts/common/regions.py` split the
+  mixed-language "Western Europe"/"Southern Europe" region groupings into single-language
+  regions (`Germany/DACH`, `France/Benelux`, `Spain`, `Italy`) so `language_for_region()`
+  can route precisely instead of guessing across a mixed grouping. Every other region
+  (Nordics, Eastern Europe, Latin America, Middle East, etc.) deliberately still defaults
+  to English — there is no vetted template for them yet, and none should be added without
+  a real one backing it. `copywriter.py`'s `build_combat_sports_email()` now renders
+  subject/greeting/intro/models/cta/signoff entirely from the per-language template
+  (`target_language` computed via `language_for_region(lead['region'])` at draft time and
+  persisted to the new `outreach_leads.target_language` column); the English-only Lookbook
+  attachment mention is intentionally not carried into the untranslated languages.
+  Icebreaker generation is now language-aware (`ICEBREAKER_PROMPTS` per language, formal
+  register enforced in the prompt itself) and every generated icebreaker — in every
+  language, including English — passes through a `validate_icebreaker()` firewall before
+  use: rejects anything too short/long, any hallucinated Cyrillic/CJK/Japanese script, and
+  (for DE/FR/ES/IT) any informal "du/tu/tú" register leakage. One retry on failure, then a
+  fixed safe fallback line per language (logged to stdout so the fallback rate per language
+  is visible in run output) — never an unvalidated line goes out.
+
+  **Follow-up before high-volume sending in these languages:** the DE/FR/ES/IT templates
+  and icebreaker prompts are AI-drafted, not yet reviewed by a native speaker. Recommend a
+  native-speaker pass before scaling volume, same as `real_specs_combat_sports.json`
+  required Hamad's own verification before its English content shipped.
+
+  Migration `leadgen_social_contact_discovery_and_target_language` (applied directly via
+  Supabase MCP against `iuhdisnbmksoxdeumhpf`, no local migration file — same convention
+  as this repo's prior schema changes) added `target_language text not null default 'en'`
+  and `facebook_url text` to `leadgen.outreach_leads`, and widened
+  `outreach_leads_contact_method_check` to include `'facebook_message_manual_needed'`.
+
 ## 2026-07-21 — Scale back Lead Hunter per-run volume to fit the shared Groq token budget
 
 Following the prior entry's finding (4 regions x 15 candidates consumed ~99.5k of Groq's
