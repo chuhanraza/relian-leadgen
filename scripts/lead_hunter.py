@@ -35,7 +35,7 @@ from common.web_search import (
 
 load_dotenv()
 
-MAX_REGIONS_PER_RUN = 4
+MAX_REGIONS_PER_RUN = 2
 QUALIFIED_TARGET_PER_RUN = 20
 
 DISCOVERY_QUERIES = {
@@ -157,10 +157,15 @@ def discover_names(vertical: str, region: str) -> list[str]:
     query = DISCOVERY_QUERIES[vertical].format(region=region)
     results = ddg_search(query, max_results=10)
     prompt = DISCOVERY_PROMPTS[vertical].format(region=region, search_results=format_results(results))
-    raw = generate(prompt, max_tokens=1024)
-    candidates = extract_json(raw)
+    try:
+        raw = generate(prompt, max_tokens=1024)
+        candidates = extract_json(raw)
+    except Exception as exc:  # noqa: BLE001 — e.g. Groq rate limit; one region's failure
+        # shouldn't crash the whole run and skip every remaining region plus later stages.
+        print(f"[lead_hunter] discovery failed for region={region!r}: {exc}")
+        return []
     names = [c.get("brand_name", "").strip() for c in candidates if c.get("brand_name")]
-    return names[:15]
+    return names[:10]
 
 
 def _name_match_score(brand_name: str, url: str) -> int:

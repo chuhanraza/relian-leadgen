@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-07-21 — Scale back Lead Hunter per-run volume to fit the shared Groq token budget
+
+Following the prior entry's finding (4 regions x 15 candidates consumed ~99.5k of Groq's
+shared 100k-tokens/day free budget in a single vertical's single run), Hamad chose to scale
+back per-run volume rather than accept uneven/throttled days or cut runs/day. `verify_candidate()`
+(the per-candidate domain-resolution call, with page-text context — the dominant token
+cost at up to 60 calls/run before this change) is the main thing this reduces.
+
+- `MAX_REGIONS_PER_RUN`: 4 → 2.
+- `discover_names()` candidate cap: 15 → 10 (roughly back toward the original 8, slightly
+  higher). Worst case this brings verify calls/run from up to 60 down to up to 20 — about
+  a 3x reduction in the dominant cost driver.
+- 4 runs/day per vertical unchanged, per Hamad's choice to keep run frequency and reduce
+  per-run depth instead.
+- `discover_names()` also hardened the same way `copywriter.py` was fixed in the prior
+  entry: its `generate()` call had no error handling, so a Groq failure there would have
+  crashed `lead_hunter.py` entirely and skipped every remaining region plus every later
+  stage (Enricher/Copywriter/Sender/Summary) for that run — the exact same crash-cascade
+  bug, just not yet triggered on this code path. Now logs and returns `[]` for that region
+  (treated the same as "found nothing"), letting the run continue.
+- README updated to reflect the new 2x10 numbers and cite the real token-usage evidence
+  for why, instead of restating the original untested 4x15 estimate as current behavior.
+
+Real per-day sustainable throughput at 2x10x4 still isn't confirmed — no token-usage
+telemetry is exposed by Groq outside of the rate-limit error message itself, so this is a
+reasoned estimate (roughly 1/3 of the volume that exhausted the entire daily budget in one
+run), not a guarantee. May need another round of tuning once a few real days of data come in.
+
 ## 2026-07-21 — Fix Copywriter crash-cascade; found Groq daily token limit is the real ceiling
 
 First real scheduled run under the new 4x/16x scaling (moto_apparel, `run #2`) failed at

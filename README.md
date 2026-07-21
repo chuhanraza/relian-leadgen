@@ -25,13 +25,16 @@ checkmarks while silently doing nothing useful all day. The health check fails t
 job loudly and immediately instead, before any real stage runs, and names exactly which
 credential broke.
 
-1. `scripts/lead_hunter.py` — processes up to 4 regions per run (least-recently-covered
+1. `scripts/lead_hunter.py` — processes up to 2 regions per run (least-recently-covered
    first, see `scripts/common/regions.py` and `pick_regions()`), stopping early if 20
-   qualified leads get inserted before all 4 are done. Per region: a free DuckDuckGo
-   search hands results to Groq (free LLM, no card) to extract up to 15 candidate names,
+   qualified leads get inserted before both are done. Per region: a free DuckDuckGo
+   search hands results to Groq (free LLM, no card) to extract up to 10 candidate names,
    each gets a second targeted search to resolve and verify their real domain. Dedups by
-   `(vertical, domain)`, inserts as `status='researched'`. Target: ~30 drafted/day/vertical
-   across the day's 4 runs — actual yield depends on real candidate availability.
+   `(vertical, domain)`, inserts as `status='researched'`. Originally tried 4 regions x 15
+   candidates — that alone consumed ~99.5k of Groq's shared 100k-tokens/day free budget in
+   a single vertical's single run (real error, not an estimate), so this was scaled back to
+   2x10 to leave headroom for both verticals across the day's 4 runs each. Actual
+   sustainable yield still needs a few days of real data to confirm.
    `ddg_search()` retries once after a 5s wait on failure and paces itself with a fixed
    1.5s delay between calls; persistent failures are tracked per-region in
    `regions_covered.ddg_failures` and surfaced by `daily_summary.py` if nonzero.
