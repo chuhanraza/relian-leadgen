@@ -97,6 +97,29 @@ own browser, logged into `relianmfg@gmail.com`. Steps:
 Until these secrets exist, both workflows will fail at the API-call steps — that's
 expected; trigger a manual run (`workflow_dispatch`) once they're set to confirm.
 
+### Apollo.io (optional — last-resort contact stage, not required to run the pipeline)
+
+Enricher's contact-discovery waterfall ends with an Apollo.io lookup, tried only after
+every free method (own-site secondary-page crawl, Overpass, Facebook dork,
+Instagram/Linktree) has already failed. It's off by default — the pipeline runs fine
+without it, that lead just falls through to `skipped_no_email` as before.
+
+This uses Apollo's own REST API directly, with its own credential — it is **not** the
+same as any Apollo MCP connector available in an interactive Claude session, since the
+GitHub Actions cron runs unattended and can't reach that. To turn it on:
+
+1. Get a free-tier API key from Apollo → Settings → API, add it to `.env` locally and as
+   the GitHub repo secret `APOLLO_API_KEY`.
+2. Optionally set `APOLLO_MAX_CALLS_PER_RUN` (default `5`) — a hard cap on how many leads
+   per Enricher run may trigger an Apollo lookup, since each attempt can spend real Apollo
+   credits and this runs unattended, 4x/day/vertical, with no per-call confirmation.
+3. Every lead that reaches this stage gets its outcome logged to `research_notes`
+   (`not_configured`, `cap_reached`, `no_org_found`, `no_people_found`,
+   `rejected_unverified:<status>`, or `verified_email_found`) so you can check the real
+   hit rate after a week and decide whether it's worth the credit cost at all. It only
+   ever accepts an email when Apollo's own status is exactly `verified` — never a
+   guessed/extrapolated/unverified one.
+
 ## Filling in the spec config — REQUIRED before real technical claims go out
 
 `config/real_specs_moto_apparel.json` and `config/real_specs_combat_sports.json` are

@@ -3,27 +3,39 @@
 For every status='researched' lead that hasn't been enriched yet (research_notes IS NULL),
 fetches the brand's actual site + a DuckDuckGo search for their contact info, pulls 1-2
 genuine specific details, and attempts to find a real published contact email. If that
-primary route finds nothing, falls back to common.contact_discovery's waterfall (Overpass
--> Facebook dork -> Instagram/Linktree) before giving up. Never guesses an email pattern —
-no email found anywhere means status='skipped_no_email' and the lead does not proceed to
-the Copywriter.
+primary route finds nothing, it next crawls the lead's OWN site more thoroughly
+(common.contact_discovery.crawl_domain_secondary_pages — sitemap.xml / /contact / /about
+pages), since that's re-checking an already-known domain rather than trying a new source.
+Only if that also finds nothing does it fall back to common.contact_discovery's waterfall
+(Overpass -> Facebook dork -> Instagram/Linktree -> Apollo.io, verified emails only, capped
+by APOLLO_MAX_CALLS_PER_RUN) before giving up. Never guesses an email pattern — no email
+found anywhere means status='skipped_no_email' and the lead does not proceed to the
+Copywriter.
 
 Usage:
   python scripts/enricher.py moto_apparel
   python scripts/enricher.py combat_sports
 """
 
+import os
 import sys
 
 from dotenv import load_dotenv
 
-from common.contact_discovery import discover_contact
+from common.contact_discovery import (
+    crawl_domain_secondary_pages,
+    discover_contact,
+    get_last_apollo_outcome,
+    reset_apollo_call_count,
+)
 from common.db import get_client
 from common.groq_client import generate
 from common.parsing import extract_json
 from common.web_search import ddg_search, fetch_page_text, format_results
 
 load_dotenv()
+
+APOLLO_MAX_CALLS_PER_RUN = int(os.environ.get("APOLLO_MAX_CALLS_PER_RUN") or "5")
 
 PROMPT = """Research this company for a B2B outreach pitch: {brand_name} ({website_url}).
 
@@ -53,6 +65,7 @@ No other text.
 
 
 def run(vertical: str) -> None:
+    reset_apollo_call_count()
     db = get_client()
     leads = (
         db.table("outreach_leads")
@@ -100,7 +113,25 @@ def run(vertical: str) -> None:
             print(f"[enricher] {lead['domain']}: email_found=True (primary)")
             continue
 
-        fallback = discover_contact(lead["brand_name"], lead["region"])
+        if secondary_email := crawl_domain_secondary_pages(website_url):
+            db.table("outreach_leads").update(
+                {
+                    "research_notes": notes,
+                    "contact_email": secondary_email,
+                    "contact_method": "email",
+                }
+            ).eq("id", lead["id"]).execute()
+            print(f"[enricher] {lead['domain']}: email_found=True (secondary_page_crawl)")
+            continue
+
+        fallback = discover_contact(
+            lead["brand_name"], lead["region"], apollo_max_calls_per_run=APOLLO_MAX_CALLS_PER_RUN
+        )
+        apollo_outcome = get_last_apollo_outcome()
+        if apollo_outcome not in ("not_attempted", "not_configured"):
+            notes = f"{notes} [Apollo: {apollo_outcome}]".strip()
+            print(f"[enricher] {lead['domain']}: apollo_outcome={apollo_outcome}")
+
         if fallback["email"]:
             db.table("outreach_leads").update(
                 {

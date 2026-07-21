@@ -1,5 +1,62 @@
 # Changelog
 
+## 2026-07-21 — Deeper own-site crawl, Apollo last-resort stage, directory batch ingestion
+
+Extends the existing `scripts/common/contact_discovery.py` waterfall with higher-yield
+stages, plus a separate seed-list ingestion path. No parallel/second discovery module —
+everything lives in the one file, same as before.
+
+- **Secondary-page/sitemap crawl** (`crawl_domain_secondary_pages()` in
+  `contact_discovery.py`, wired into `enricher.py`): before falling through to
+  Overpass/Facebook-dork/Instagram, Enricher now re-checks the lead's OWN known domain
+  more thoroughly — parses `/sitemap.xml` (stdlib `xml.etree.ElementTree`, not
+  BeautifulSoup's lxml-backed XML mode, to avoid adding an lxml dependency) for
+  contact/about/wholesale-type URLs, falls back to homepage internal links if there's no
+  sitemap, and checks up to 5 pages for a `mailto:` link or a body-text email match. This
+  runs BEFORE the Overpass/FB/Instagram waterfall since it's re-examining an
+  already-known source, not trying a new one. Added `beautifulsoup4` to
+  `requirements.txt` for HTML parsing (stdlib `html.parser` backend, still no lxml).
+
+- **Apollo.io, last resort, verified-emails-only** (`try_apollo()` in
+  `contact_discovery.py`, wired as the final stage of `discover_contact()`, after
+  Instagram/Linktree): organization search -> people search -> people match against
+  Apollo's real REST API. Hard rule: only accepts an email when Apollo's own
+  `email_status` is exactly `"verified"` — `"likely to engage"`, `"unverified"`,
+  `"unavailable"`, or anything else is rejected the same as no match, no exceptions.
+  This needs its own `APOLLO_API_KEY` (repo secret + local `.env`) — it calls Apollo's
+  REST API directly, which is a different credential from any Apollo MCP connector,
+  since the unattended GitHub Actions cron can't reach an interactive session's MCP
+  connection. It's optional and off by default; the pipeline runs unchanged without it.
+  Because each attempt can spend real Apollo credits and this runs unattended 4x/day per
+  vertical with no per-call confirmation, added a hard `APOLLO_MAX_CALLS_PER_RUN`
+  env-configurable cap (default 5, enforced **per vertical per Enricher run** — both
+  workflows share one Apollo key/cap, so a full day is effectively up to
+  `cap × 4 runs × 2 verticals` attempts, not a single global daily cap). Every attempt's
+  outcome (`not_configured`, `cap_reached`, `no_org_found`, `no_people_found`,
+  `rejected_unverified:<status>`, `verified_email_found`) is appended to
+  `research_notes` so Hamad can see the real hit rate after a week and decide if it's
+  worth the credit cost at all.
+
+- **Directory/trade-show batch ingestion** (`scripts/ingest_directory_list.py`, new,
+  separate from the daily per-lead waterfall): takes a CSV path or URL with columns
+  `brand_name, region, email (optional), website (optional)` — Hamad supplies the actual
+  exhibitor-list export (EICMA/ISPO/Europages etc.), since these change yearly and need a
+  human to find the current one. Inserts as `status='researched'` leads, reusing Lead
+  Hunter's dedup-by-domain logic so re-running against an updated export is idempotent.
+  Rows with a real email are marked already-enriched (`research_notes` set, so Enricher's
+  `research_notes IS NULL` filter skips them); rows without one are left for Enricher to
+  research normally. Rows with neither a website nor an email are skipped (not inserted
+  with a fabricated domain), since `outreach_leads.domain` is `NOT NULL`.
+
+**Deferred, not built**: a headless-browser (Playwright + Chromium) Google Maps scrape,
+scoped for brick-and-mortar leads (gyms/shops) where every existing method — including
+the two above — finds no website at all. Skipped for now because it's a materially
+heavier CI dependency (large install, slower/more fragile in GitHub Actions than the
+plain-`requests` stages) and scrapes a live Google product's public results, which
+carries similar (if milder) ToS tension to the Facebook dork. Revisit only after
+confirming the two stages above actually move the needle on the real gap, specifically
+for brick-and-mortar leads rather than online brands.
+
 ## 2026-07-21 — moto_apparel deterministic template, English only
 
 Brings moto_apparel to parity with combat_sports's approach: real verified specs +

@@ -18,6 +18,8 @@ jobs:
       GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
       GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
       GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
+      APOLLO_API_KEY: ${{ secrets.APOLLO_API_KEY }}
+      APOLLO_MAX_CALLS_PER_RUN: ${{ secrets.APOLLO_MAX_CALLS_PER_RUN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
