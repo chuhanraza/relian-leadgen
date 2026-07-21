@@ -7,17 +7,18 @@ import os
 
 from groq import Groq
 
-MODEL = "llama-3.3-70b-versatile"
+MODEL_QUALITY = "llama-3.3-70b-versatile"
+MODEL_FAST = "llama-3.1-8b-instant"
 
 
 def _client() -> Groq:
     return Groq(api_key=os.environ["GROQ_API_KEY"])
 
 
-def generate(prompt: str, max_tokens: int = 1024) -> str:
+def generate(prompt: str, max_tokens: int = 1024, model: str = MODEL_QUALITY) -> str:
     client = _client()
     completion = client.chat.completions.create(
-        model=MODEL,
+        model=model,
         messages=[{"role": "user", "content": prompt}],
         max_tokens=max_tokens,
     )

@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 from common.db import get_client
-from common.groq_client import generate
+from common.groq_client import MODEL_FAST, generate
 from common.parsing import extract_json
 from common.regions import REGIONS_BY_VERTICAL
 from common.web_search import (
@@ -168,7 +168,7 @@ def discover_names(vertical: str, region: str) -> list[str]:
     results = ddg_search(query, max_results=10)
     prompt = DISCOVERY_PROMPTS[vertical].format(region=region, search_results=format_results(results))
     try:
-        raw = generate(prompt, max_tokens=1024)
+        raw = generate(prompt, max_tokens=1024, model=MODEL_FAST)
         candidates = extract_json(raw)
     except Exception as exc:  # noqa: BLE001 — e.g. Groq rate limit; one region's failure
         # shouldn't crash the whole run and skip every remaining region plus later stages.

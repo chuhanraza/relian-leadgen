@@ -18,7 +18,12 @@ load_dotenv()
 
 
 def check_groq() -> None:
+    import os
+
     from common.groq_client import generate
+
+    key = os.environ.get("GROQ_API_KEY", "")
+    print(f"[healthcheck] Groq key fingerprint: ...{key[-4:] if len(key) >= 4 else '????'}")
 
     reply = generate("Reply with exactly: OK", max_tokens=5)
     if "OK" not in reply.upper():

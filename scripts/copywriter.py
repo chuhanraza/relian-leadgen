@@ -22,7 +22,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from common.db import get_client
-from common.groq_client import generate
+from common.groq_client import MODEL_FAST, generate
 from common.parsing import extract_json
 from common.regions import language_for_region
 
@@ -228,7 +228,7 @@ def select_images(vertical: str, brand_name: str, research_notes: str, catalogue
     )
     valid_filenames = {c["filename"] for c in catalogue}
     try:
-        raw = generate(prompt, max_tokens=256)
+        raw = generate(prompt, max_tokens=256, model=MODEL_FAST)
         picked = extract_json(raw)
     except Exception as exc:  # noqa: BLE001 — bad image pick shouldn't block the draft
         print(f"[copywriter] image selection failed for {brand_name!r}: {exc}")

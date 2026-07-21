@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-07-21 — Split Groq key per vertical, cheaper model for low-stakes calls
+
+The two verticals were competing for one shared Groq free-tier token budget (100K TPD),
+throttling both when either ran hot.
+
+- **Per-vertical Groq key**: Hamad manually created a second free Groq account and added
+  its key as the GitHub secret `GROQ_API_KEY_COMBAT_SPORTS`. `combat_sports.yml` now maps
+  `GROQ_API_KEY` to that secret instead of the original `GROQ_API_KEY`; `moto_apparel.yml`
+  is untouched and keeps drawing from the original key. `scripts/common/groq_client.py`
+  needed no change — it already just reads `os.environ["GROQ_API_KEY"]`, and each workflow
+  now injects a different real key under that same env var name. Each vertical now has its
+  own 100K TPD pool instead of splitting one, roughly doubling the system's effective daily
+  budget.
+
+- **Cheaper model for low-stakes extraction calls** (`scripts/common/groq_client.py`):
+  `generate()` now takes a `model` parameter (`MODEL_QUALITY` = `llama-3.3-70b-versatile`,
+  default; `MODEL_FAST` = `llama-3.1-8b-instant`, far more generous free tier — 14,400 RPD
+  / 500K TPD vs 1,000 RPD / 100K TPD). Switched to `MODEL_FAST`: `lead_hunter.py`'s
+  `discover_names()` (raw name extraction from search results) and `copywriter.py`'s
+  `select_images()` (picking 1-2 filenames from a short list). Left on the default 70B
+  model, where output quality genuinely matters: `verify_candidate()`'s brand/size/type
+  judgment call, `generate_icebreaker()`'s actual email content (already guarded by
+  `validate_icebreaker()`), and Enricher's research/email-extraction call.
+
+- Added a safe key fingerprint (`...last 4 chars`) to `healthcheck.py`'s Groq check so a
+  manually triggered run's log makes it obvious which of the two keys was actually used,
+  without ever printing the full key.
+
 ## 2026-07-21 — Contact-discovery waterfall, Facebook Pages as valid targets, DE/FR/ES/IT templates
 
 Three additions, all additive to the existing pipeline:
