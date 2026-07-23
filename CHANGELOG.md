@@ -1,5 +1,35 @@
 # Changelog
 
+## 2026-07-23 — EICMA invitation campaign (new system, separate from cold outreach)
+
+Adds a standing "wave" invitation campaign for EICMA 2026 (Nov 5-8, Hall 14 Booth A10),
+independent of the moto_apparel/combat_sports cold-outreach pipeline. Sends up to 20
+Gmail drafts/day from `leadgen.eicma_invitations` (242 contacts, 1 suppressed), cycling
+through non-suppressed contacts and rotating to a new wave design (new subject + HTML)
+each time a full pass completes.
+
+- **Schema**: `leadgen.eicma_campaign_state` (single-row wave counter, RLS enabled, no
+  policies — service-role only, same pattern as every other table in this schema).
+- **`config/eicma_waves/`**: `wave_1.html` (dark navy header w/ `assets/branding/
+  relian-logo.png`, hero jacket photo, event details block, orange CTA), `wave_1.json`
+  (subject line), and a README documenting the `{{GREETING}}` token convention and how to
+  add wave_2+ before the campaign needs it (falls back to the highest available wave and
+  logs `NEEDS NEW WAVE DESIGN` rather than failing if the next one isn't ready).
+- **`scripts/eicma_campaign.py`**: per-contact greeting extraction via Groq
+  `llama-3.1-8b-instant` (same fast model as `discover_names`/`select_images`), never-
+  contacted-first / oldest-`last_sent_at`-next ordering, `suppressed=true` always
+  excluded from the query. Hard rule unchanged from the rest of this repo: only
+  `drafts().create`, never `messages().send`.
+- **`scripts/common/gmail_client.py`**: `create_draft()` gained an `is_html` flag (default
+  `False`, so the existing plain-text cold-outreach callers are unaffected) to support
+  the fully-designed HTML wave templates.
+- **`.github/workflows/eicma_campaign.yml`**: daily cron at 12:00 UTC (moto_apparel runs
+  at 2/8/14/20:00, combat_sports at 4/10/16/22:00 — no collision).
+- Live-verified: ran a real batch of 20 against the actual `eicma_invitations` table —
+  correct exclusion of the 1 suppressed contact, correct greeting extraction (e.g.
+  "Spyke" from `info@spyke.it`), 20 real Gmail drafts created (never sent), wave counter
+  and per-contact `last_sent_at`/`status`/`last_wave_design` updated correctly.
+
 ## 2026-07-23 — 5 new regions per vertical, Brazilian Portuguese template + icebreaker
 
 Adds coverage for regions Lead Hunter had no vetted path into, plus a full `pt` localization

@@ -38,6 +38,7 @@ def create_draft(
     body: str,
     attachment_paths: list[Path] | None = None,
     from_email: str | None = None,
+    is_html: bool = False,
 ) -> str:
     """Creates a Gmail draft (status: draft, never sent). Returns the draft id.
 
@@ -47,6 +48,9 @@ def create_draft(
     from_email must be a verified "send as" alias on this Gmail account (Settings ->
     Accounts -> Send mail as) — confirmed working for hm@relianmfg.com. An unverified
     address here would silently fall back to the account's primary address.
+
+    is_html=True sends body as text/html (e.g. a full campaign template) instead of the
+    default text/plain used by the cold-outreach pipeline's short drafted pitches.
     """
     service = build("gmail", "v1", credentials=_credentials())
 
@@ -55,7 +59,7 @@ def create_draft(
     if from_email:
         message["from"] = from_email
     message["subject"] = subject
-    message.attach(MIMEText(body))
+    message.attach(MIMEText(body, "html" if is_html else "plain"))
 
     for path in attachment_paths or []:
         try:
