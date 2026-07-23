@@ -206,7 +206,7 @@ def verify_candidate(vertical: str, brand_name: str, region: str) -> dict | None
         page_text=page_text or "(could not fetch a page)",
     )
     try:
-        raw = generate(prompt, max_tokens=512)
+        raw = generate(prompt, max_tokens=512, model=MODEL_FAST)
         data = extract_json(raw)
     except Exception as exc:  # noqa: BLE001 — one candidate's failure shouldn't kill the run
         print(f"[lead_hunter] verify failed for {brand_name!r}: {exc}")

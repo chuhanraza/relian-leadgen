@@ -29,7 +29,7 @@ from common.contact_discovery import (
     reset_apollo_call_count,
 )
 from common.db import get_client
-from common.groq_client import generate
+from common.groq_client import MODEL_FAST, generate
 from common.parsing import extract_json
 from common.web_search import ddg_search, fetch_page_text, format_results
 
@@ -91,7 +91,7 @@ def run(vertical: str) -> None:
             search_results=search_results,
         )
         try:
-            raw = generate(prompt, max_tokens=1024)
+            raw = generate(prompt, max_tokens=1024, model=MODEL_FAST)
             data = extract_json(raw)
         except Exception as exc:  # noqa: BLE001 — a single lead's research failure shouldn't kill the run
             print(f"[enricher] failed for {lead['domain']}: {exc}")
