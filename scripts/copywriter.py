@@ -116,6 +116,12 @@ formale (Lei/Suo) — mai "tu". Nessun superlativo di marketing, nessun
 "rivoluzionario". Si basi su questo dettaglio reale se utile:
 "{research_notes}". Non implichi MAI che il fornitore/prodotto attuale sia
 inferiore. Risponda SOLO con quella frase.""",
+    "pt": """Escreva EXATAMENTE uma frase curta e objetiva (máximo 25 palavras)
+para abrir um e-mail profissional a "{brand_name}". Use um tom cordial mas
+profissional, sem gírias e sem exagero de marketing (nada de
+"revolucionário"). Baseie-se neste detalhe real se útil:
+"{research_notes}". NUNCA dê a entender que o fornecedor/produto atual deles
+é inferior. Responda APENAS com essa frase.""",
 }
 
 # Every language's forbidden-informal check, plus the length/script checks in
@@ -125,6 +131,11 @@ FORBIDDEN_INFORMAL = {
     "fr": [" tu ", " te ", " toi ", " ton ", " ta ", " tes "],
     "es": [" tú ", " tuyo", " tuya"],
     "it": [" tu ", " tuo", " tua", " tuoi", " tue"],
+    "pt": [" revolucionário", " incrível oferta"],
+    # Brazilian Portuguese doesn't have as strong a formal/informal pronoun split
+    # as the other four languages — "você" is standard even in professional
+    # writing — so this list targets marketing-hyperbole terms instead of a
+    # T-V distinction, which doesn't apply the same way here.
 }
 
 # Safe, honest, formal-register openers used only if two generation attempts both fail
@@ -135,6 +146,7 @@ FALLBACK_ICEBREAKERS = {
     "fr": "Votre entreprise a attiré notre attention et nous souhaitions vous contacter directement.",
     "es": "Conocimos su empresa y quisimos ponernos en contacto con usted directamente.",
     "it": "Abbiamo scoperto la sua azienda e desideravamo contattarla direttamente.",
+    "pt": "Conhecemos sua empresa e gostaríamos de entrar em contato diretamente.",
 }
 
 

@@ -58,5 +58,17 @@
     ],
     "cta": "Avrebbe 5 minuti questa settimana per discutere quale modello si adatta meglio al suo marchio? Sarò lieto di condividere il catalogo completo su richiesta.",
     "signoff": "Cordiali saluti,\nHamad, Relian MFG"
+  },
+  "pt": {
+    "subject": "Dúvida sobre o estoque de bandagens de boxe",
+    "greeting": "Prezados,",
+    "intro": "Fabricamos bandagens de boxe de marca própria, qualidade boutique, para marcas que desejam se destacar no mercado. Temos vários modelos especializados prontos para sua coleção 2026:",
+    "models": [
+      "**Heritage (Mescla de Algodão):** Tecido resistente com patch de couro costurado para um branding de luxo",
+      "**Pro-Stretch:** Tecido elástico de algodão com impressão de silicone 3D que não descasca",
+      "**Kit Higiene:** Vem embalado em uma bolsa de tela, resolve o problema das bandagens emaranhadas"
+    ],
+    "cta": "Teria 5 minutos essa semana para conversar sobre qual modelo combina com sua marca? Terei prazer em compartilhar nosso catálogo completo caso solicite.",
+    "signoff": "Atenciosamente,\nHamad, Relian MFG"
   }
 }

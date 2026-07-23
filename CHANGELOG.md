@@ -1,5 +1,57 @@
 # Changelog
 
+## 2026-07-23 — 5 new regions per vertical, Brazilian Portuguese template + icebreaker
+
+Adds coverage for regions Lead Hunter had no vetted path into, plus a full `pt` localization
+for `combat_sports` (the first non-Romance-strict-formal language in the set — see note below).
+
+- **`scripts/common/regions.py`**: added `Eastern Europe`, `Southeast Asia (ex-China)`,
+  `Brazil`, `Latin America (ex-Brazil)`, `South Africa` to `MOTO_APPAREL_REGIONS`; added
+  `Brazil`, `Latin America (ex-Brazil)`, `South Africa` to `COMBAT_SPORTS_REGIONS`
+  (`Eastern Europe`/`Southeast Asia (ex-China)` were already present there). Renamed the
+  existing `combat_sports` region `"Latin America"` to `"Latin America (ex-Brazil)"` to
+  split out Brazil as its own (now Portuguese-routed) region — since this is a rename, not
+  a fresh addition, the matching `leadgen.regions_covered` row was migrated in place
+  (`UPDATE ... SET region = 'Latin America (ex-Brazil)'`) so its `last_searched_at` history
+  (2026-07-21) carries over instead of the region looking falsely "never searched" and
+  getting needlessly re-scraped. No `outreach_leads` rows existed under the old region
+  string, so nothing else needed relabeling.
+- **`LANGUAGE_BY_REGION`**: added `Brazil -> pt`. Confirmed `language_for_region()` is
+  only ever called from `copywriter.py`'s `vertical == "combat_sports"` branch — `moto_apparel`
+  never routes through it — so `moto_apparel`'s English-only behavior is unaffected even
+  though `Brazil` is now in both verticals' region lists.
+- **`config/email_templates_combat_sports.json`**: added a `pt` entry, same schema as
+  `en`/`de`/`fr`/`es`/`it`.
+- **`scripts/copywriter.py`**: added `pt` to `ICEBREAKER_PROMPTS` and `FORBIDDEN_INFORMAL`
+  (targets marketing-hyperbole terms — "revolucionário", "incrível oferta" — instead of a
+  T-V pronoun split, since Brazilian Portuguese uses "você" as the standard professional
+  register and doesn't have the same formal/informal divide as the other four languages).
+  Also added a `pt` entry to `FALLBACK_ICEBREAKERS`: `generate_icebreaker()` does a bare
+  `FALLBACK_ICEBREAKERS[lang]` lookup with no default, so a Portuguese lead whose two
+  generation attempts both failed validation would have hit a `KeyError` mid-run without
+  this — added to keep parity with the other 4 languages.
+- Brand-new regions have zero history in `leadgen.regions_covered`, so Lead Hunter's
+  existing least-recently-searched rotation will naturally prioritize them without any
+  extra logic.
+
+## 2026-07-23 — Reject discovered emails belonging to a different business
+
+`scripts/common/contact_discovery.py` gained `email_matches_business()` / `_domain_root()`
+/ `GENERIC_EMAIL_PROVIDERS`, wired into all three email-acceptance points in
+`scripts/enricher.py` (primary extraction, secondary-page crawl, waterfall fallback).
+Fixes a confirmed live bug where a name-based search step (Facebook dork, Instagram,
+Apollo) surfaced a plausible-sounding but wrong email for a common/generic business name —
+e.g. `united-fightwear.com` got assigned `okami-fightgear.com`'s email, and two unrelated
+"Invictus Fight Academy" gyms in different countries got each other's contacts. A
+discovered email is now accepted only if its domain root matches the lead's own domain, or
+(for generic providers like gmail) its local-part shares a brand-name token — otherwise
+it's rejected and logged, falling through to the next waterfall stage exactly like "no
+email found." The 3 known-bad leads were reverted to `status='researched'` and
+re-processed through `enricher.py combat_sports`: `united-fightwear.com` and
+`invictusacademy.com.tr` correctly landed on `skipped_no_email` (their previous wrong
+emails were rejected, nothing valid replaced them); `invictusmartialarts.com` found a
+new, validated email.
+
 ## 2026-07-21 — Deeper own-site crawl, Apollo last-resort stage, directory batch ingestion
 
 Extends the existing `scripts/common/contact_discovery.py` waterfall with higher-yield

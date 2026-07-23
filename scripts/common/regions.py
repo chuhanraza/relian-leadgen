@@ -16,8 +16,13 @@ MOTO_APPAREL_REGIONS = [
     "Spain",
     "Italy",
     "Nordics",
+    "Eastern Europe",
+    "Southeast Asia (ex-China)",
     "Australia/NZ",
     "Japan",
+    "Brazil",
+    "Latin America (ex-Brazil)",
+    "South Africa",
 ]
 
 # Mainland China is intentionally absent — combat_sports excludes it per the brief.
@@ -35,8 +40,10 @@ COMBAT_SPORTS_REGIONS = [
     "Australia/NZ",
     "Japan",
     "Southeast Asia (ex-China)",
-    "Latin America",
+    "Brazil",
+    "Latin America (ex-Brazil)",
     "Middle East",
+    "South Africa",
 ]
 
 REGIONS_BY_VERTICAL = {
@@ -49,10 +56,11 @@ LANGUAGE_BY_REGION = {
     "France/Benelux": "fr",
     "Spain": "es",
     "Italy": "it",
+    "Brazil": "pt",
 }
-# Every other region defaults to English. This is deliberate — Nordics, Eastern Europe,
-# Latin America, and others are NOT covered by a vetted template yet. Do not add languages
-# here without a real, ideally native-reviewed, template to back them.
+# South Africa, Latin America (ex-Brazil), Eastern Europe, Nordics, Southeast Asia,
+# Middle East all stay English by design — no vetted template backs them yet.
+# moto_apparel has NO language routing at all (English-only, deliberate, unchanged).
 
 
 def language_for_region(region: str) -> str:
