@@ -25,6 +25,7 @@ from dotenv import load_dotenv
 from common.contact_discovery import (
     crawl_domain_secondary_pages,
     discover_contact,
+    email_matches_business,
     get_last_apollo_outcome,
     reset_apollo_call_count,
 )
@@ -117,26 +118,30 @@ def run(vertical: str) -> None:
 
         email = data.get("contact_email")
         if email and "@" in email:
-            db.table("outreach_leads").update(
-                {
-                    "research_notes": notes,
-                    "contact_email": email,
-                    "contact_method": "email",
-                }
-            ).eq("id", lead["id"]).execute()
-            print(f"[enricher] {lead['domain']}: email_found=True (primary)")
-            continue
+            if email_matches_business(lead["brand_name"], lead["domain"], email):
+                db.table("outreach_leads").update(
+                    {
+                        "research_notes": notes,
+                        "contact_email": email,
+                        "contact_method": "email",
+                    }
+                ).eq("id", lead["id"]).execute()
+                print(f"[enricher] {lead['domain']}: email_found=True (primary)")
+                continue
+            print(f"[enricher] rejected mismatched email {email} for {lead['domain']}")
 
         if secondary_email := crawl_domain_secondary_pages(website_url):
-            db.table("outreach_leads").update(
-                {
-                    "research_notes": notes,
-                    "contact_email": secondary_email,
-                    "contact_method": "email",
-                }
-            ).eq("id", lead["id"]).execute()
-            print(f"[enricher] {lead['domain']}: email_found=True (secondary_page_crawl)")
-            continue
+            if email_matches_business(lead["brand_name"], lead["domain"], secondary_email):
+                db.table("outreach_leads").update(
+                    {
+                        "research_notes": notes,
+                        "contact_email": secondary_email,
+                        "contact_method": "email",
+                    }
+                ).eq("id", lead["id"]).execute()
+                print(f"[enricher] {lead['domain']}: email_found=True (secondary_page_crawl)")
+                continue
+            print(f"[enricher] rejected mismatched email {secondary_email} for {lead['domain']}")
 
         fallback = discover_contact(
             lead["brand_name"], lead["region"], apollo_max_calls_per_run=APOLLO_MAX_CALLS_PER_RUN
@@ -146,11 +151,16 @@ def run(vertical: str) -> None:
             notes = f"{notes} [Apollo: {apollo_outcome}]".strip()
             print(f"[enricher] {lead['domain']}: apollo_outcome={apollo_outcome}")
 
-        if fallback["email"]:
+        fallback_email = fallback["email"]
+        if fallback_email and not email_matches_business(lead["brand_name"], lead["domain"], fallback_email):
+            print(f"[enricher] rejected mismatched email {fallback_email} for {lead['domain']} (fallback:{fallback['method']})")
+            fallback_email = None
+
+        if fallback_email:
             db.table("outreach_leads").update(
                 {
                     "research_notes": notes,
-                    "contact_email": fallback["email"],
+                    "contact_email": fallback_email,
                     "contact_method": "email",
                 }
             ).eq("id", lead["id"]).execute()

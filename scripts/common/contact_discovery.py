@@ -28,6 +28,7 @@ CONTACT_SLUGS = (
     "contact", "about", "us", "privacy", "terms", "impressum", "wholesale", "support", "faq",
 )
 REQUEST_HEADERS = {"User-Agent": "Mozilla/5.0"}
+GENERIC_EMAIL_PROVIDERS = {"gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com"}
 
 
 def _valid_email(candidates: list[str]) -> str | None:
@@ -35,6 +36,42 @@ def _valid_email(candidates: list[str]) -> str | None:
         if not any(d in e.lower() for d in IGNORED_EMAIL_DOMAINS):
             return e
     return None
+
+
+def _domain_root(d: str) -> str:
+    """Strip protocol/path/subdomain noise for comparison, e.g.
+    'https://www.united-fightwear.com/contact' -> 'united-fightwear.com'
+    """
+    d = re.sub(r"^https?://", "", d.lower()).split("/")[0]
+    parts = d.split(".")
+    return ".".join(parts[-2:]) if len(parts) > 1 else d
+
+
+def email_matches_business(brand_name: str, lead_domain: str, candidate_email: str) -> bool:
+    """Reject a discovered email that doesn't plausibly belong to the SAME
+    business as the lead. A name-based search step (Facebook dork, Instagram,
+    Apollo) can surface a plausible-sounding but wrong result for common/generic
+    business names (e.g. a different real company entirely) — this must run
+    before any discovered email is accepted anywhere in the pipeline.
+
+    Passes if either:
+    1. The email's domain root matches the lead's own domain root (strongest signal).
+    2. The email is on a generic personal provider (gmail etc.) AND the local-part
+       shares a meaningful token with the brand name.
+    Otherwise rejects.
+    """
+    email_domain = _domain_root(candidate_email.split("@")[-1])
+    lead_root = _domain_root(lead_domain)
+
+    if email_domain == lead_root:
+        return True
+
+    if email_domain in GENERIC_EMAIL_PROVIDERS:
+        local_part = candidate_email.split("@")[0].lower()
+        brand_tokens = re.findall(r"[a-z0-9]+", brand_name.lower())
+        return any(len(t) > 2 and t in local_part for t in brand_tokens)
+
+    return False
 
 
 def _contact_urls_from_sitemap(website_url: str) -> list[str]:
