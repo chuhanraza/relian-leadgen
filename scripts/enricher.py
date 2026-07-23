@@ -91,11 +91,25 @@ def run(vertical: str) -> None:
             search_results=search_results,
         )
         try:
-            raw = generate(prompt, max_tokens=1024, model=MODEL_FAST)
+            raw = generate(prompt, max_tokens=2048, model=MODEL_FAST)
             data = extract_json(raw)
-        except Exception as exc:  # noqa: BLE001 — a single lead's research failure shouldn't kill the run
-            print(f"[enricher] failed for {lead['domain']}: {exc}")
-            continue
+        except Exception as first_exc:
+            # Most failures here are token-cap truncation (probabilistic response length),
+            # not a content problem, so a second sample is very likely to land under the cap.
+            try:
+                raw = generate(prompt, max_tokens=2048, model=MODEL_FAST)
+                data = extract_json(raw)
+            except Exception as second_exc:  # noqa: BLE001 — a single lead's research failure shouldn't kill the run
+                print(f"[enricher] failed for {lead['domain']} after retry: {second_exc}")
+                db.table("outreach_leads").update(
+                    {
+                        "research_notes": (
+                            f"[ENRICHMENT_FAILED] generate/parse failed twice: "
+                            f"{first_exc}; {second_exc}"
+                        )[:500],
+                    }
+                ).eq("id", lead["id"]).execute()
+                continue
 
         notes = data.get("research_notes", "").strip()
         if data.get("domestically_made"):
