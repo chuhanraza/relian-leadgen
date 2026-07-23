@@ -26,5 +26,13 @@
   {
     "filename": "moto_glove_orange_knuckle_armor.jpg",
     "description": "Orange/black leather motorcycle glove with hard-shell knuckle armor"
+  },
+  {
+    "filename": "moto_jacket_khaki_adventure.jpg",
+    "description": "Khaki/grey textile adventure-touring motorcycle jacket with red accents, front three-quarter view, airvent paneling"
+  },
+  {
+    "filename": "moto_glove_black_yellow_vented.jpg",
+    "description": "Black/hi-vis-yellow vented motorcycle glove with hard-shell knuckle armor and mesh finger panels"
   }
 ]
