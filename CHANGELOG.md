@@ -1,5 +1,40 @@
 # Changelog
 
+## 2026-07-23 — combat_sports: daily-target-aware Lead Hunter (110 raw/day buffer)
+
+`combat_sports` needs ~50 drafted leads/day; since roughly half of qualified leads never
+yield a findable email, Lead Hunter now targets 110 raw-qualified leads/day as a buffer,
+and keeps working until that's actually met instead of stopping at a fixed per-run cap.
+moto_apparel's sizing (`MAX_REGIONS_PER_RUN=2` / `QUALIFIED_TARGET_PER_RUN=20`) is
+unchanged.
+
+- **`scripts/lead_hunter.py`**: combat_sports now runs `_run_daily_target()` — queries
+  today's (UTC) `outreach_leads` count for the vertical at the start of every run,
+  computes `remaining = 110 - today's_count`, exits immediately if already met, otherwise
+  loops full passes over all 17 regions (varying discovery query phrasing pass-to-pass so
+  it's not repeating identical searches) until remaining is satisfied or 3 full passes
+  complete with zero new candidates in the last pass (the real "today's supply is
+  exhausted" signal — logged explicitly). Each cron slot re-checks the cumulative count
+  rather than assuming a fresh day, so the existing 4x/day schedule now naturally tops up
+  whatever's still short instead of risking a short run from a DuckDuckGo failure storm.
+  Logs today's-count-before, remaining, pass count, and final outcome every run.
+- **Bugfixes surfaced by actually running the new loop at volume** (the old 2-region cap
+  rarely exercised these paths enough to hit them): `discover_names()` crashed with
+  `AttributeError` when the fast model replied with a JSON array of bare strings instead
+  of `{"brand_name": ...}` objects — now skips malformed entries instead of dying mid-run;
+  `verify_candidate()` accepted the literal string `"null"` as a domain (model returning
+  text instead of JSON null) and inserted a garbage row — now rejected the same as a
+  missing domain. One garbage row (`brand_name="Warrior Gym"`, `domain="null"`) inserted
+  during testing was deleted from `leadgen.outreach_leads`.
+- **Live-verified** against the real `leadgen.outreach_leads` table: today's count went
+  7 → 47 (first test run, before the bugfixes above were found) → 59 (second run, with
+  fixes, `today_count_before=47`, `remaining=63`, 3 passes, `outcome=exhausted`, 12 new
+  inserted). The second run's exhaustion was a real Groq daily-token-budget hit (500K TPD)
+  on the local dev key from two large back-to-back test runs today — not a code fault. In
+  production, combat_sports' 4x/day cron runs against its own dedicated
+  `GROQ_API_KEY_COMBAT_SPORTS` with its own 500K TPD headroom, unaffected by this local
+  testing.
+
 ## 2026-07-23 — EICMA invitation campaign (new system, separate from cold outreach)
 
 Adds a standing "wave" invitation campaign for EICMA 2026 (Nov 5-8, Hall 14 Booth A10),

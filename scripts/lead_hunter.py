@@ -38,9 +38,28 @@ load_dotenv()
 MAX_REGIONS_PER_RUN = 2
 QUALIFIED_TARGET_PER_RUN = 20
 
+# combat_sports only: about half of qualified leads never yield a findable email
+# (confirmed in production data), so Lead Hunter targets a raw-qualified buffer well
+# above the ~50/day drafted goal, and keeps working across full region passes each run
+# until that buffer is met for the day rather than stopping at a fixed per-run count.
+DAILY_RAW_TARGET = 110
+MAX_DAILY_PASSES = 3
+
 DISCOVERY_QUERIES = {
     "moto_apparel": "boutique motorcycle technical apparel brand {region}",
     "combat_sports": "boxing MMA Muay Thai BJJ gym academy shop brand {region}",
+}
+
+# Re-passes over the full region list (combat_sports only) vary the discovery query's
+# phrasing instead of repeating the exact same search DuckDuckGo already answered —
+# pass 0 is the original phrasing so a single-pass run behaves identically to before.
+DISCOVERY_QUERY_VARIANTS = {
+    "moto_apparel": [DISCOVERY_QUERIES["moto_apparel"]],
+    "combat_sports": [
+        "boxing MMA Muay Thai BJJ gym academy shop brand {region}",
+        "independent boxing Muay Thai MMA BJJ gym or gear brand {region}",
+        "combat sports training academy small shop or brand {region}",
+    ],
 }
 
 DISCOVERY_PROMPTS = {
@@ -163,8 +182,9 @@ def pick_regions(db, vertical: str, n: int) -> list[str]:
     return ordered[:n]
 
 
-def discover_names(vertical: str, region: str) -> list[str]:
-    query = DISCOVERY_QUERIES[vertical].format(region=region)
+def discover_names(vertical: str, region: str, pass_index: int = 0) -> list[str]:
+    variants = DISCOVERY_QUERY_VARIANTS[vertical]
+    query = variants[pass_index % len(variants)].format(region=region)
     results = ddg_search(query, max_results=10)
     prompt = DISCOVERY_PROMPTS[vertical].format(region=region, search_results=format_results(results))
     try:
@@ -174,7 +194,19 @@ def discover_names(vertical: str, region: str) -> list[str]:
         # shouldn't crash the whole run and skip every remaining region plus later stages.
         print(f"[lead_hunter] discovery failed for region={region!r}: {exc}")
         return []
-    names = [c.get("brand_name", "").strip() for c in candidates if c.get("brand_name")]
+    # The fast model occasionally replies with a JSON array of bare strings instead of
+    # the requested {"brand_name": ...} objects — skip anything that isn't the expected
+    # shape rather than crashing the whole run on a single malformed response.
+    names = []
+    for c in candidates:
+        if isinstance(c, dict):
+            name = c.get("brand_name", "").strip()
+        elif isinstance(c, str):
+            name = c.strip()
+        else:
+            continue
+        if name:
+            names.append(name)
     return names[:10]
 
 
@@ -212,12 +244,94 @@ def verify_candidate(vertical: str, brand_name: str, region: str) -> dict | None
         print(f"[lead_hunter] verify failed for {brand_name!r}: {exc}")
         return None
 
-    if not data.get("qualifies") or not data.get("domain"):
+    domain = data.get("domain")
+    # The model occasionally emits the literal string "null"/"none" instead of a real
+    # JSON null when it means "no domain found" — treat those the same as missing.
+    if not data.get("qualifies") or not domain or str(domain).strip().lower() in ("null", "none"):
         return None
     return data
 
 
-def run(vertical: str) -> dict:
+def _process_region(
+    db, vertical: str, region: str, existing_domains: set[str], pass_index: int = 0
+) -> int:
+    """Runs discovery + verify + insert for one region. Returns count newly inserted
+    (mutates existing_domains as it goes so later regions/passes in the same run see
+    dupes from earlier ones immediately). Always upserts regions_covered so the next
+    pick_regions() call reflects this region as just-searched, regardless of vertical
+    or which run() path called it.
+    """
+    print(f"[lead_hunter] --- region={region} (pass={pass_index}) ---")
+    failures_before = get_ddg_failure_count()
+
+    names = discover_names(vertical, region, pass_index=pass_index)
+    print(f"[lead_hunter] discovered {len(names)} candidate names: {names}")
+
+    inserted_this_region = 0
+    for brand_name in names:
+        verified = verify_candidate(vertical, brand_name, region)
+        if not verified:
+            continue
+
+        domain = verified["domain"].strip().lower()
+        if not domain or domain in existing_domains:
+            continue
+        existing_domains.add(domain)
+
+        row = {
+            "vertical": vertical,
+            "brand_name": brand_name,
+            "domain": domain,
+            "region": region,
+            "website_url": verified.get("website_url"),
+            "status": "researched",
+        }
+        if vertical == "combat_sports":
+            sub_type = verified.get("sub_type")
+            if sub_type in ("core_gym", "shop_distributor", "small_brand"):
+                row["sub_type"] = sub_type
+
+        db.table("outreach_leads").insert(row).execute()
+        inserted_this_region += 1
+        print(f"[lead_hunter] verified + inserted {brand_name!r} -> {domain}")
+
+    now = datetime.now(timezone.utc).isoformat()
+    db.table("regions_covered").upsert(
+        {
+            "vertical": vertical,
+            "region": region,
+            "last_searched_at": now,
+            "leads_found_count": inserted_this_region,
+            "ddg_failures": get_ddg_failure_count() - failures_before,
+        },
+        on_conflict="vertical,region",
+    ).execute()
+
+    print(f"[lead_hunter] region={region} inserted={inserted_this_region}")
+    return inserted_this_region
+
+
+def _today_start_utc_iso() -> str:
+    now = datetime.now(timezone.utc)
+    return datetime(now.year, now.month, now.day, tzinfo=timezone.utc).isoformat()
+
+
+def _count_today(db, vertical: str) -> int:
+    resp = (
+        db.table("outreach_leads")
+        .select("id", count="exact")
+        .eq("vertical", vertical)
+        .gte("created_at", _today_start_utc_iso())
+        .execute()
+    )
+    return resp.count or 0
+
+
+def _run_fixed(vertical: str) -> dict:
+    """Original behavior, unchanged: up to MAX_REGIONS_PER_RUN regions, stop once
+    QUALIFIED_TARGET_PER_RUN qualified leads are inserted this run. Still used by
+    moto_apparel.
+    """
     reset_ddg_failure_count()
     db = get_client()
     regions = pick_regions(db, vertical, MAX_REGIONS_PER_RUN)
@@ -232,58 +346,11 @@ def run(vertical: str) -> dict:
     total_inserted = 0
 
     for region in regions:
-        print(f"[lead_hunter] --- region={region} ---")
-        failures_before = get_ddg_failure_count()
-
-        names = discover_names(vertical, region)
-        print(f"[lead_hunter] discovered {len(names)} candidate names: {names}")
-
-        inserted_this_region = 0
-        for brand_name in names:
-            verified = verify_candidate(vertical, brand_name, region)
-            if not verified:
-                continue
-
-            domain = verified["domain"].strip().lower()
-            if not domain or domain in existing_domains:
-                continue
-            existing_domains.add(domain)
-
-            row = {
-                "vertical": vertical,
-                "brand_name": brand_name,
-                "domain": domain,
-                "region": region,
-                "website_url": verified.get("website_url"),
-                "status": "researched",
-            }
-            if vertical == "combat_sports":
-                sub_type = verified.get("sub_type")
-                if sub_type in ("core_gym", "shop_distributor", "small_brand"):
-                    row["sub_type"] = sub_type
-
-            db.table("outreach_leads").insert(row).execute()
-            inserted_this_region += 1
-            total_inserted += 1
-            print(f"[lead_hunter] verified + inserted {brand_name!r} -> {domain}")
-
-        now = datetime.now(timezone.utc).isoformat()
-        db.table("regions_covered").upsert(
-            {
-                "vertical": vertical,
-                "region": region,
-                "last_searched_at": now,
-                "leads_found_count": inserted_this_region,
-                "ddg_failures": get_ddg_failure_count() - failures_before,
-            },
-            on_conflict="vertical,region",
-        ).execute()
+        inserted_this_region = _process_region(db, vertical, region, existing_domains)
+        total_inserted += inserted_this_region
         regions_processed.append(region)
 
-        print(
-            f"[lead_hunter] region={region} inserted={inserted_this_region} "
-            f"(run total={total_inserted})"
-        )
+        print(f"[lead_hunter] (run total={total_inserted})")
 
         if total_inserted >= QUALIFIED_TARGET_PER_RUN:
             print(
@@ -299,6 +366,124 @@ def run(vertical: str) -> dict:
     }
     print(f"[lead_hunter] run complete: {result}")
     return result
+
+
+def _run_daily_target(vertical: str) -> dict:
+    """combat_sports only: keeps working until DAILY_RAW_TARGET raw-qualified leads
+    exist for today (UTC), re-checked at the start of every run so the 4x/day cron
+    naturally tops up whatever's still short rather than assuming a fresh day each
+    time. Loops full region passes (varying discovery query phrasing after the first)
+    until the remaining target is met, or MAX_DAILY_PASSES passes complete with the
+    last one finding zero new qualifying candidates — the real "supply exhausted for
+    today" signal, logged explicitly rather than just quietly stopping.
+    """
+    reset_ddg_failure_count()
+    db = get_client()
+
+    today_count_before = _count_today(db, vertical)
+    remaining = DAILY_RAW_TARGET - today_count_before
+    print(
+        f"[lead_hunter] vertical={vertical} daily_target={DAILY_RAW_TARGET} "
+        f"today_count_before={today_count_before} remaining={remaining}"
+    )
+
+    if remaining <= 0:
+        print("[lead_hunter] today's target already met, exiting cleanly without searching")
+        return {
+            "regions_processed": [],
+            "leads_inserted": 0,
+            "today_count_before": today_count_before,
+            "today_count_after": today_count_before,
+            "passes_run": 0,
+            "outcome": "already_met",
+            "ddg_failures": 0,
+        }
+
+    regions = REGIONS_BY_VERTICAL[vertical]
+    existing_domains = {
+        row["domain"]
+        for row in db.table("outreach_leads").select("domain").eq("vertical", vertical).execute().data
+    }
+
+    regions_processed: list[str] = []
+    total_inserted = 0
+    outcome = "target_met"
+    passes_run = 0
+
+    for pass_index in range(MAX_DAILY_PASSES):
+        passes_run = pass_index + 1
+        print(f"[lead_hunter] === pass {passes_run}/{MAX_DAILY_PASSES} (remaining={remaining - total_inserted}) ===")
+
+        # Full pick_regions ranking each pass so the least-recently-searched regions
+        # (including ones just covered earlier in this same run) are still ordered
+        # sensibly — but since n covers the whole list, every region is processed
+        # regardless of order.
+        ranked_regions = pick_regions(db, vertical, len(regions))
+        pass_inserted = 0
+
+        for region in ranked_regions:
+            inserted_this_region = _process_region(
+                db, vertical, region, existing_domains, pass_index=pass_index
+            )
+            pass_inserted += inserted_this_region
+            total_inserted += inserted_this_region
+            if region not in regions_processed:
+                regions_processed.append(region)
+
+            print(f"[lead_hunter] (pass total={pass_inserted}, run total={total_inserted})")
+
+            if total_inserted >= remaining:
+                break
+
+        if total_inserted >= remaining:
+            print(
+                f"[lead_hunter] remaining target satisfied mid-pass "
+                f"(pass {passes_run}, total_inserted={total_inserted} >= remaining={remaining})"
+            )
+            outcome = "target_met"
+            break
+
+        if passes_run == MAX_DAILY_PASSES:
+            if pass_inserted == 0:
+                outcome = "exhausted"
+                print(
+                    f"[lead_hunter] today's supply genuinely exhausted: {MAX_DAILY_PASSES} full "
+                    f"passes complete, zero new qualifying candidates found in the last pass "
+                    f"(total_inserted={total_inserted}, still short of remaining={remaining})"
+                )
+            else:
+                outcome = "max_passes_reached"
+                print(
+                    f"[lead_hunter] hit {MAX_DAILY_PASSES}-pass cap still short of target "
+                    f"(total_inserted={total_inserted}, remaining={remaining}) — last pass still "
+                    f"found {pass_inserted} new, so not calling this exhaustion; next cron run "
+                    f"will top up further"
+                )
+            break
+
+        print(
+            f"[lead_hunter] pass {passes_run} complete, found {pass_inserted} new this pass, "
+            f"still short of remaining={remaining} (total_inserted={total_inserted}) — starting another pass"
+        )
+
+    today_count_after = today_count_before + total_inserted
+    result = {
+        "regions_processed": regions_processed,
+        "leads_inserted": total_inserted,
+        "today_count_before": today_count_before,
+        "today_count_after": today_count_after,
+        "passes_run": passes_run,
+        "outcome": outcome,
+        "ddg_failures": get_ddg_failure_count(),
+    }
+    print(f"[lead_hunter] run complete: {result}")
+    return result
+
+
+def run(vertical: str) -> dict:
+    if vertical == "combat_sports":
+        return _run_daily_target(vertical)
+    return _run_fixed(vertical)
 
 
 if __name__ == "__main__":
