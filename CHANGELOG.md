@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-07-24 — combat_sports: hand-wraps banner now inline in the email body, not an attachment
+
+Follow-up to the same-day banner change: Hamad asked for the banner to render inline in
+the email itself (visible in the body, like an image in a normal HTML email) rather than
+sitting as a separate downloadable attachment.
+
+- **`scripts/common/gmail_client.py`**: `create_draft()` gained `inline_image_path` /
+  `inline_image_cid`. When given, builds the standard Gmail inline-image MIME shape — a
+  `multipart/related` part (the HTML body + the image with a matching `Content-ID` and
+  `Content-Disposition: inline`) nested inside the outer `multipart/mixed`, so any real
+  `attachment_paths` stay genuine separate attachments alongside it, not folded into the
+  inline part. A plain-text body is auto-converted to safe, paragraph-preserving HTML
+  (new `_plain_text_to_html()`, escapes special characters, blank-line breaks become
+  `<p>` blocks) since a plain-text body can't carry an inline image; `is_html=True`
+  callers (unaffected — eicma_campaign.py doesn't use inline images) keep their body
+  as-is. A missing/unreadable inline image falls back to no image rather than failing
+  the draft, same as attachment_paths.
+- **`scripts/sender.py`**: replaced `EXTRA_ATTACHMENTS` with `INLINE_BANNERS` —
+  combat_sports' `hand_wraps_banner.jpg` is now passed via `inline_image_path` instead of
+  appended to `attachment_paths`. The 1-2 individually selected catalogue product photos
+  are unchanged, still real attachments.
+- **Live-verified** on a real Gmail draft (`boxen-babv.de` / Bayerische Boxer, German
+  copy): read the actual draft back via the Gmail API — `multipart/related` containing
+  the `text/html` body (with `<img src="cid:banner-image">` appended after the real
+  paragraph text, paragraph breaks intact) and `hand_wraps_banner.jpg` as
+  `Content-ID: <banner-image>`, `Content-Disposition: inline`; the 2 catalogue photos
+  remained separate `Content-Disposition: attachment` parts, confirming the two don't
+  get conflated. The 3 real drafts created earlier today with the old
+  attachment-only banner (boxen-babv.de, buddhafightwear.com, khunpon.de) were deleted
+  and regenerated with this fix so what's actually in Gmail now reflects it.
+
 ## 2026-07-24 — combat_sports: standing hand-wraps banner on every draft
 
 - **`assets/catalogue/combat_sports/hand_wraps_banner.jpg`**: final approved banner
