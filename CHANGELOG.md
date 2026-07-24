@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-07-24 — combat_sports: standing hand-wraps banner on every draft
+
+- **`assets/catalogue/combat_sports/hand_wraps_banner.jpg`**: final approved banner
+  (all 6 hand-wrap/case/bag product photos, dark background, "PRIVATE LABEL HAND WRAPS /
+  Relian Sports" corner tag), 162,038 bytes (~158KB, well under the 300KB email-size
+  budget), verified as a real baseline JPEG (1288x926).
+- **`scripts/sender.py`**: added `EXTRA_ATTACHMENTS` (combat_sports only) — the banner is
+  now attached to every outgoing draft in addition to the 1-2 individually selected
+  catalogue photos, not instead of them. Attachment only, via the existing
+  `gmail_client.create_draft()` MIMEImage path — no inline `<img>`, no change to the
+  plain-text body copy.
+- **Live-verified** against a real Gmail draft (not just code review): inserted an
+  isolated, self-addressed test lead (`relianmfg@gmail.com`, clearly labeled
+  `TEST BANNER VERIFICATION - DELETE ME`) since every real combat_sports lead was
+  already either drafted-and-sent or not yet email-qualified. Ran `sender.py
+  combat_sports` for real, then read the actual created draft's MIME parts back via the
+  Gmail API: 3 parts — plain-text body, the 2 catalogue photos, and `hand_wraps_banner.jpg`
+  at exactly 162,038 bytes (byte-for-byte matching the file on disk) as a standalone
+  `image/jpeg` attachment. Test draft and test lead row deleted afterward.
+
 ## 2026-07-24 — Enricher/Copywriter per-run batch caps + real permanent-lockout bug fix
 
 Diagnosed before assuming a cause: pulled the real GitHub Actions history for

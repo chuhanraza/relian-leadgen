@@ -33,6 +33,13 @@ FROM_EMAILS = {
     "combat_sports": "hm@reliansports.com",
 }
 
+# combat_sports only: attached to every outgoing draft in addition to the 1-2
+# individually selected product photos below — a standing product-sheet-style
+# attachment, never embedded inline in the HTML body.
+EXTRA_ATTACHMENTS = {
+    "combat_sports": [CATALOGUE_DIR / "combat_sports" / "hand_wraps_banner.jpg"],
+}
+
 
 def run(vertical: str) -> None:
     db = get_client()
@@ -50,7 +57,7 @@ def run(vertical: str) -> None:
     for lead in leads:
         attachment_paths = [
             CATALOGUE_DIR / vertical / filename for filename in (lead.get("catalogue_images") or [])
-        ]
+        ] + EXTRA_ATTACHMENTS.get(vertical, [])
         try:
             draft_id = create_draft(
                 to_email=lead["contact_email"],
