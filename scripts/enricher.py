@@ -38,6 +38,11 @@ load_dotenv()
 
 APOLLO_MAX_CALLS_PER_RUN = int(os.environ.get("APOLLO_MAX_CALLS_PER_RUN") or "5")
 
+# Per-run cap so Enricher makes steady, safe progress every run instead of trying the
+# entire pending backlog (each lead involves several real network calls) in one
+# sequential pass — safely under what the 4x/day cron can clear across a day.
+ENRICHER_BATCH_SIZE = 40
+
 PROMPT = """Research this company for a B2B outreach pitch: {brand_name} ({website_url}).
 
 Homepage text (may be empty if the page couldn't be fetched):
@@ -74,10 +79,12 @@ def run(vertical: str) -> None:
         .eq("vertical", vertical)
         .eq("status", "researched")
         .is_("research_notes", "null")
+        .order("created_at")
+        .limit(ENRICHER_BATCH_SIZE)
         .execute()
         .data
     )
-    print(f"[enricher] vertical={vertical} pending={len(leads)}")
+    print(f"[enricher] vertical={vertical} pending_this_batch={len(leads)} (cap={ENRICHER_BATCH_SIZE})")
 
     for lead in leads:
         website_url = lead.get("website_url") or f"https://{lead['domain']}"
@@ -101,13 +108,18 @@ def run(vertical: str) -> None:
                 raw = generate(prompt, max_tokens=2048, model=MODEL_FAST)
                 data = extract_json(raw)
             except Exception as second_exc:  # noqa: BLE001 — a single lead's research failure shouldn't kill the run
+                exc_text = f"{first_exc}; {second_exc}"
+                if "rate_limit_exceeded" in exc_text or " 429" in exc_text:
+                    # A Groq TPD/rate-limit hit is this run's fault, not this lead's — the
+                    # query filters on research_notes IS NULL, so writing a permanent note
+                    # here would exclude the lead from every future run's retry forever, even
+                    # once the token budget resets. Leave it untouched so it's picked up again.
+                    print(f"[enricher] rate-limited for {lead['domain']}, leaving pending for retry: {exc_text[:200]}")
+                    continue
                 print(f"[enricher] failed for {lead['domain']} after retry: {second_exc}")
                 db.table("outreach_leads").update(
                     {
-                        "research_notes": (
-                            f"[ENRICHMENT_FAILED] generate/parse failed twice: "
-                            f"{first_exc}; {second_exc}"
-                        )[:500],
+                        "research_notes": f"[ENRICHMENT_FAILED] generate/parse failed twice: {exc_text}"[:500],
                     }
                 ).eq("id", lead["id"]).execute()
                 continue

@@ -1,5 +1,52 @@
 # Changelog
 
+## 2026-07-24 — Enricher/Copywriter per-run batch caps + real permanent-lockout bug fix
+
+Diagnosed before assuming a cause: pulled the real GitHub Actions history for
+combat_sports' 18:25 and 23:52 UTC (2026-07-23) runs. Both Enricher steps completed
+with exit 0 (no crash, no timeout) in 9m41s and 2m2s. The 73 leads sitting at
+status='researched' turned out to ALL already have non-null research_notes — every
+single one was `[ENRICHMENT_FAILED] generate/parse failed twice: ... rate_limit_exceeded`
+(confirmed via direct SQL: 73/73 rate-limit, 0 other causes, spanning all three of
+that day's runs). So the actual problem was never "Enricher never got to them" or "one
+run can't finish a 70+ backlog" — it's that combat_sports' Lead Hunter now makes far
+more Groq calls per run (per yesterday's daily-target rewrite) and was burning through
+the same Groq key's daily token budget before Enricher's own calls in the same job even
+ran, so every Enricher attempt failed with a 429.
+
+That alone would just mean "retry next run" — except **Enricher's failure path is not
+retry-safe**: on a permanent research_notes write, the row is excluded forever from the
+`research_notes IS NULL` query that finds pending work, since nothing distinguishes a
+rate-limit hit (this run's fault) from a real content failure (this lead's fault). A
+transient 429 was therefore permanently bricking leads with no path back to retry, even
+after the daily token budget reset. This is the real bug — a per-run batch cap alone
+would not have fixed it, since every lead in a capped batch would still hit the same
+429 and still get permanently locked out.
+
+- **`scripts/enricher.py`**: `ENRICHER_BATCH_SIZE = 40`, applied as
+  `.order("created_at").limit(...)` on the pending query (oldest backlog first) so a run
+  makes steady, bounded progress instead of attempting the whole backlog sequentially.
+  Separately and more importantly: the double-failure handler now checks for
+  `rate_limit_exceeded`/`429` in the exception text and, if found, leaves
+  `research_notes` untouched (`continue` without writing) instead of writing a permanent
+  `[ENRICHMENT_FAILED]` note — so a token-budget hit gets retried by a later run instead
+  of being excluded forever. Non-rate-limit failures still get the permanent note
+  (unchanged) since those are genuinely lead-specific, not run-timing-specific.
+- **`scripts/copywriter.py`**: checked for the same missing-limit pattern —
+  `COPYWRITER_BATCH_SIZE = 40` added the same way. Its existing failure path (bare
+  `continue`, no notes touched) was already retry-safe, so no lockout bug there.
+- **One-time data cleanup**: the 73 leads locked out by the bug above (all confirmed
+  rate-limit-only failures via SQL, zero other-cause failures) had `research_notes`
+  reset to `NULL` in `leadgen.outreach_leads` so they re-enter the real backlog instead
+  of staying permanently stuck.
+- **Live-verified** against production Supabase, real before/after (not estimated): ran
+  `enricher.py combat_sports` against the real 73-lead backlog post-fix.
+  `researched`+`research_notes IS NULL` (untouched backlog) went **73 → 33** (the
+  40-cap processed cleanly, zero rate-limit errors on a fresh day's token budget); of
+  those 40, 18 got a real found email (→ ready for Copywriter) and 22 landed on
+  `skipped_no_email` (Facebook-only or nothing found). `drafted` unchanged at 20
+  (Copywriter not run in this test).
+
 ## 2026-07-23 — combat_sports: daily-target-aware Lead Hunter (110 raw/day buffer)
 
 `combat_sports` needs ~50 drafted leads/day; since roughly half of qualified leads never

@@ -34,6 +34,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 CONFIG_DIR = BASE_DIR / "config"
 ASSETS_DIR = BASE_DIR / "assets" / "catalogue"
 
+# Same reasoning as Enricher's ENRICHER_BATCH_SIZE: don't try the entire pending backlog
+# (each lead involves an icebreaker generation + image-selection call) in one run.
+COPYWRITER_BATCH_SIZE = 40
+
 SIGNATURE = "\n\nHamad, Relian MFG"
 
 # ---------- generic fallback: used by any vertical without a deterministic template ----------
@@ -334,10 +338,15 @@ def run(vertical: str) -> None:
         .eq("contact_method", "email")
         .not_.is_("contact_email", "null")
         .not_.is_("research_notes", "null")
+        .order("created_at")
+        .limit(COPYWRITER_BATCH_SIZE)
         .execute()
         .data
     )
-    print(f"[copywriter] vertical={vertical} pending={len(leads)} verified_by_hamad={verified}")
+    print(
+        f"[copywriter] vertical={vertical} pending_this_batch={len(leads)} "
+        f"(cap={COPYWRITER_BATCH_SIZE}) verified_by_hamad={verified}"
+    )
 
     for lead in leads:
         try:
