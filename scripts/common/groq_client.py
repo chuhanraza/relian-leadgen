@@ -15,7 +15,25 @@ def _client() -> Groq:
     return Groq(api_key=os.environ["GROQ_API_KEY"])
 
 
+# Module-level counter, same pattern as web_search.py's ddg failure counter — lets a
+# caller (Lead Hunter) read a running total of calls it has made THIS run without
+# threading a counter through every function signature. Reset at the start of each
+# run() invocation that wants to police its own usage.
+_call_count = 0
+
+
+def get_call_count() -> int:
+    return _call_count
+
+
+def reset_call_count() -> None:
+    global _call_count
+    _call_count = 0
+
+
 def generate(prompt: str, max_tokens: int = 1024, model: str = MODEL_QUALITY) -> str:
+    global _call_count
+    _call_count += 1
     client = _client()
     completion = client.chat.completions.create(
         model=model,

@@ -1,5 +1,61 @@
 # Changelog
 
+## 2026-07-25 — combat_sports: Lead Hunter Groq-budget cap (Enricher stall root cause)
+
+Diagnosed before assuming a cause, per Hamad's explicit ask:
+
+1. **Which of today's other asks actually landed**: checked `git log`, all branches,
+   stash, and reflog, plus grepped tracked files for the claimed changes. Only the
+   banner work landed (`56e3dc6`, later made inline by `511b7e6`). The
+   misclassification-tightening ask for `lead_hunter.py`'s `VERIFY_PROMPTS`, the copy
+   rewrite + "Relian Sports" branding for `email_templates_combat_sports.json`/
+   `copywriter.py`, and the `daily_run_log` count fix for `daily_summary.py` **never
+   landed anywhere** — no commit, no branch, no stash entry, zero trace. They were
+   requested but a confirmation never came back, and indeed nothing was ever done.
+2. **Enricher itself has no import/syntax/crash bug.** Ran it directly (not via CI):
+   it started immediately, processed real leads, found real emails, and exited 0 —
+   no exception. The "immediate crash" hypothesis is wrong.
+3. **The real cause**: pulled the actual GitHub Actions step timing for the last 5 real
+   combat_sports runs. Copywriter finished in ~1 second on every single one — meaning
+   its pending query (leads with a found email) returned zero rows every time. Cross-
+   referencing `outreach_leads.created_at` against each run's window confirmed it
+   quantitatively: enrichment success rate collapsed from 1/11 (07:00 run) to 2/10
+   (12:00) to 0/7 (18:00) to 0/1 (23:00) to 0/14 (the next day's 07:00 run) — a shared
+   Groq daily-token-budget being exhausted progressively across the day, not a code
+   fault. Yesterday's Lead Hunter daily-target rewrite can make up to 17 regions *
+   (1 discovery + 10 verify) calls * 3 passes = **~560 Groq calls in a single run**, on
+   the *same* dedicated `GROQ_API_KEY_COMBAT_SPORTS` key that Enricher (<=40 calls/run)
+   and Copywriter (<=80 calls/run) need right after it in the same GitHub Actions job.
+   Lead Hunter alone can and does exhaust the whole day's budget before Enricher gets a
+   turn — and since the retry-safe fix from 2026-07-24 correctly leaves `research_notes`
+   untouched on a 429 rather than writing a permanent failure, the symptom is exactly
+   what was reported: leads sit at `research_notes IS NULL` forever, safely, but never
+   actually get processed.
+4. **Fix**: `scripts/common/groq_client.py` gained a module-level call counter
+   (`get_call_count()`/`reset_call_count()`, same pattern as `web_search.py`'s DDG
+   failure counter). `scripts/lead_hunter.py`'s `_run_daily_target()` now checks it
+   against a new `MAX_GROQ_CALLS_PER_RUN = 100` before processing each region and stops
+   early (`outcome="groq_budget_reached"`, logged explicitly) once hit — guaranteeing
+   headroom stays for Enricher/Copywriter later in the same job and for the rest of the
+   day's cron runs, instead of Lead Hunter being free to spend the entire shared budget
+   by itself. moto_apparel's `_run_fixed()` path is untouched (its call volume was never
+   close to this problem).
+- **Live-verified with real before/after Supabase queries** (not estimates): backlog
+  (`researched` + `research_notes IS NULL`) was 57 immediately before this run (down
+  from the reported 59 after an earlier diagnostic run found 2 real emails). Ran the
+  fixed `enricher.py combat_sports` against it: **57 -> 55** (`researched`+null-notes),
+  with `researched`+found-email going 2 -> 3 and `skipped_no_email` going 59 -> 60 — real
+  but modest progress, limited by my own local dev key being nearly spent from today's
+  heavy testing (a *different* key from production's dedicated
+  `GROQ_API_KEY_COMBAT_SPORTS`, so this doesn't fully validate production's current
+  quota state — only that the retry-safe behavior and the new budget cap both work
+  correctly under real rate-limiting).
+- Ran `copywriter.py` then `sender.py` on the 3 real email-qualified leads
+  (profightshop.de, basemma.com, southsidemma.net): all 3 reached `status='drafted'`
+  with real `gmail_draft_id` values, confirmed live via the Gmail API — 3 real drafts
+  exist with correct recipients and subjects in their target languages (German,
+  Spanish, English).
+
 ## 2026-07-24 — combat_sports: hand-wraps banner now inline in the email body, not an attachment
 
 Follow-up to the same-day banner change: Hamad asked for the banner to render inline in
