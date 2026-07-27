@@ -69,18 +69,35 @@ def format_results(results: list[dict]) -> str:
     )
 
 
-def fetch_page_text(url: str, max_chars: int = 4000) -> str:
-    """Best-effort plain-text scrape of a page. Returns '' on any failure — callers must
-    treat that as 'no page content available', not an error.
+def html_to_text(html: str, max_chars: int = 4000) -> str:
+    """Strip scripts/styles/tags down to plain text, same rule fetch_page_text has always
+    used — pulled out standalone so a caller that already has raw HTML in memory (e.g.
+    Enricher's lead-scoring signal, which needs the tags fetch_page_text throws away) can
+    derive plain text from it too, without a second network request.
+    """
+    text = re.sub(r"<script.*?</script>|<style.*?</style>", "", html, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:max_chars]
+
+
+def fetch_page_html(url: str, max_chars: int = 200_000) -> str:
+    """Best-effort raw HTML fetch. Returns '' on any failure — callers must treat that as
+    'no page content available', not an error.
     """
     try:
         resp = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
         resp.raise_for_status()
     except Exception:  # noqa: BLE001
         return ""
-    text = re.sub(
-        r"<script.*?</script>|<style.*?</style>", "", resp.text, flags=re.DOTALL | re.IGNORECASE
-    )
-    text = re.sub(r"<[^>]+>", " ", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text[:max_chars]
+    return resp.text[:max_chars]
+
+
+def fetch_page_text(url: str, max_chars: int = 4000) -> str:
+    """Best-effort plain-text scrape of a page. Returns '' on any failure — callers must
+    treat that as 'no page content available', not an error.
+    """
+    html = fetch_page_html(url, max_chars=200_000)
+    if not html:
+        return ""
+    return html_to_text(html, max_chars)

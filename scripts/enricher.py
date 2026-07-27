@@ -31,9 +31,10 @@ from common.contact_discovery import (
 )
 from common.db import get_client
 from common.groq_client import MODEL_FAST, generate, get_call_count, get_tokens_used, reset_tokens_used
+from common.lead_scoring import score_lead
 from common.parsing import extract_json
 from common.token_usage_log import record as record_tokens
-from common.web_search import ddg_search, fetch_page_text, format_results
+from common.web_search import ddg_search, fetch_page_html, format_results, html_to_text
 
 load_dotenv()
 
@@ -90,7 +91,9 @@ def run(vertical: str) -> None:
 
     for lead in leads:
         website_url = lead.get("website_url") or f"https://{lead['domain']}"
-        page_text = fetch_page_text(website_url) or "(could not fetch page)"
+        html = fetch_page_html(website_url)
+        page_text = html_to_text(html, max_chars=4000) if html else "(could not fetch page)"
+        lead_score = score_lead(html)
         search_results = format_results(
             ddg_search(f"{lead['brand_name']} contact email", max_results=5)
         )
@@ -122,6 +125,8 @@ def run(vertical: str) -> None:
                 db.table("outreach_leads").update(
                     {
                         "research_notes": f"[ENRICHMENT_FAILED] generate/parse failed twice: {exc_text}"[:500],
+                        "lead_score": lead_score.score,
+                        "lead_score_reason": lead_score.reason,
                     }
                 ).eq("id", lead["id"]).execute()
                 continue
@@ -138,6 +143,8 @@ def run(vertical: str) -> None:
                         "research_notes": notes,
                         "contact_email": email,
                         "contact_method": "email",
+                        "lead_score": lead_score.score,
+                        "lead_score_reason": lead_score.reason,
                     }
                 ).eq("id", lead["id"]).execute()
                 print(f"[enricher] {lead['domain']}: email_found=True (primary)")
@@ -151,6 +158,8 @@ def run(vertical: str) -> None:
                         "research_notes": notes,
                         "contact_email": secondary_email,
                         "contact_method": "email",
+                        "lead_score": lead_score.score,
+                        "lead_score_reason": lead_score.reason,
                     }
                 ).eq("id", lead["id"]).execute()
                 print(f"[enricher] {lead['domain']}: email_found=True (secondary_page_crawl)")
@@ -176,6 +185,8 @@ def run(vertical: str) -> None:
                     "research_notes": notes,
                     "contact_email": fallback_email,
                     "contact_method": "email",
+                    "lead_score": lead_score.score,
+                    "lead_score_reason": lead_score.reason,
                 }
             ).eq("id", lead["id"]).execute()
             print(f"[enricher] {lead['domain']}: email_found=True (fallback:{fallback['method']})")
@@ -186,6 +197,8 @@ def run(vertical: str) -> None:
                     "facebook_url": fallback["facebook_url"],
                     "contact_method": "facebook_message_manual_needed",
                     "status": "skipped_no_email",
+                    "lead_score": lead_score.score,
+                    "lead_score_reason": lead_score.reason,
                 }
             ).eq("id", lead["id"]).execute()
             print(f"[enricher] {lead['domain']}: email_found=False, facebook_url found instead")
@@ -195,6 +208,8 @@ def run(vertical: str) -> None:
                     "research_notes": notes,
                     "contact_method": "contact_form_manual_needed",
                     "status": "skipped_no_email",
+                    "lead_score": lead_score.score,
+                    "lead_score_reason": lead_score.reason,
                 }
             ).eq("id", lead["id"]).execute()
             print(f"[enricher] {lead['domain']}: email_found=False, waterfall found nothing")

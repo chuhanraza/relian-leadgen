@@ -1,5 +1,58 @@
 # Changelog
 
+## 2026-07-28 — Phase 2: heuristic lead-scoring signal (record-only, no gating yet)
+
+Phase 1 (upgrading off the Groq free tier) explicitly stayed out of scope per Hamad —
+staying on the free tier for now. Phase 2 only:
+
+1. **New `scripts/common/lead_scoring.py`**: pure Python/regex scoring, no network or Groq
+   calls. Scores 0-100 (neutral default 50) plus a `disqualified` flag off three signals:
+   outsourcing vs. domestic-manufacturing language, e-commerce platform + marketing-stack
+   presence (Shopify/WooCommerce, Klaviyo/Yotpo/Gorgias), and physical-distribution
+   language (stockists/dealers/wholesale). Strong domestic-manufacturing language with no
+   outsourcing language present is treated as a near-disqualification (score 5,
+   `disqualified=True`) rather than just scored low.
+2. **Found and fixed a gap before wiring it in**: the spec assumed Enricher already had
+   raw HTML in memory, but `fetch_page_text()` (`common/web_search.py`) was stripping all
+   `<script>`/tags before Enricher ever saw the page, so platform/marketing-stack
+   detection would never have fired. Fixed by pulling the stripping logic out into
+   `html_to_text()` and adding `fetch_page_html()`, then having Enricher fetch raw HTML
+   once and derive plain text from it locally — same single request as before, zero added
+   network calls, but now the raw markup actually reaches the scorer.
+3. **Wired into `scripts/enricher.py`**: score computed once per lead from the HTML already
+   fetched for the existing contact-research step, recorded as `lead_score`/
+   `lead_score_reason` on every outcome path (email found via any of the three routes,
+   Facebook-only, no-email, and the Groq-failure path) — not gating anything yet.
+4. **Migration**: `leadgen.outreach_leads` gained `lead_score integer` and
+   `lead_score_reason text` (both nullable, non-breaking).
+5. **Tested against 13 real live leads** (mixed moto_apparel/combat_sports, fetched from
+   Supabase, scored against their real live HTML): brands actually running an online shop
+   (Fairtex Europe, Fighters Boutique, Blegend, Great Britain Top Team, Amado Family — all
+   Shopify or WooCommerce) scored 65; gym/academy sites with no e-commerce presence (King
+   Pro, Elite Muay Thai, Road to Glory Academy, Caberg, Gymnasia Sports, The Barn) sat at
+   the neutral 50; 2 of 13 fetches were blocked (0 bytes, likely anti-bot) and correctly
+   fell back to neutral rather than erroring. No outsourcing/domestic-language phrase hit
+   in this small sample — expected, per Hamad's plan to watch the distribution build up
+   over a few real days before picking a cutoff, not conclude from 13 leads.
+
+## 2026-07-27 — combat_sports/moto_apparel: Groq usage capped on real tokens, not call count
+
+`MAX_GROQ_CALLS_PER_RUN=100` capped the number of Groq calls, not actual token volume —
+prompts embed up to 10 search results per call, so real cost per call varies widely
+(likely 1,000-3,000+ tokens), risking the shared daily token budget being exhausted by
+Lead Hunter alone before Enricher/Copywriter get a turn later in the same job.
+
+1. `scripts/common/groq_client.py` now tracks real `completion.usage.total_tokens` per
+   call (`get_tokens_used()`/`reset_tokens_used()`).
+2. `scripts/lead_hunter.py`'s combat_sports daily-target budget check is now token-based:
+   `MAX_GROQ_TOKENS_PER_RUN = 60_000`, flagged as a conservative starting estimate, not a
+   measured number.
+3. `scripts/lead_hunter.py`/`enricher.py`/`copywriter.py` each record their real Groq
+   usage to a new shared per-job file (`scripts/common/token_usage_log.py`) since they run
+   as separate processes within the same GitHub Actions job; `daily_summary.py` (the last
+   step) rolls it into a new `leadgen.daily_run_log.groq_tokens_used` column (migration
+   applied) plus a per-stage breakdown in the existing `notes` column.
+
 ## 2026-07-25 — combat_sports: Lead Hunter Groq-budget cap (Enricher stall root cause)
 
 Diagnosed before assuming a cause, per Hamad's explicit ask:
