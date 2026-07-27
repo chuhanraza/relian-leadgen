@@ -30,8 +30,9 @@ from common.contact_discovery import (
     reset_apollo_call_count,
 )
 from common.db import get_client
-from common.groq_client import MODEL_FAST, generate
+from common.groq_client import MODEL_FAST, generate, get_call_count, get_tokens_used, reset_tokens_used
 from common.parsing import extract_json
+from common.token_usage_log import record as record_tokens
 from common.web_search import ddg_search, fetch_page_text, format_results
 
 load_dotenv()
@@ -72,6 +73,7 @@ No other text.
 
 def run(vertical: str) -> None:
     reset_apollo_call_count()
+    reset_tokens_used()
     db = get_client()
     leads = (
         db.table("outreach_leads")
@@ -196,6 +198,9 @@ def run(vertical: str) -> None:
                 }
             ).eq("id", lead["id"]).execute()
             print(f"[enricher] {lead['domain']}: email_found=False, waterfall found nothing")
+
+    print(f"[enricher] run complete: groq_calls={get_call_count()}, groq_tokens_used={get_tokens_used()}")
+    record_tokens("enricher", get_tokens_used(), get_call_count())
 
 
 if __name__ == "__main__":

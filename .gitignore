@@ -4,3 +4,4 @@ __pycache__/
 .venv/
 venv/
 gmail_token.json
+.groq_usage_run.json

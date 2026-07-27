@@ -22,7 +22,15 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 from common.db import get_client
-from common.groq_client import MODEL_FAST, generate, get_call_count, reset_call_count
+from common.groq_client import (
+    MODEL_FAST,
+    generate,
+    get_call_count,
+    get_tokens_used,
+    reset_call_count,
+    reset_tokens_used,
+)
+from common.token_usage_log import record as record_tokens
 from common.parsing import extract_json
 from common.regions import REGIONS_BY_VERTICAL
 from common.web_search import (
@@ -52,7 +60,14 @@ MAX_DAILY_PASSES = 3
 # Enricher of its whole day's token budget before it ever got a turn. Capping Lead
 # Hunter's own usage per run guarantees headroom stays for the rest of the pipeline,
 # both later in this same job and in this UTC day's remaining cron runs.
-MAX_GROQ_CALLS_PER_RUN = 100
+#
+# A call-count cap doesn't bound real cost: each call's prompt embeds full search-result
+# text (up to 10 results in discover_names, 4 in verify_candidate), so real tokens/call
+# vary widely instead of being ~fixed. Capping actual tokens is what protects the shared
+# daily token budget; call count is kept only as an informational log field below.
+# 60,000 is a conservative starting estimate, not a measured number -- watch the logged
+# groq_tokens_used and retune once real data comes in.
+MAX_GROQ_TOKENS_PER_RUN = 60_000
 
 DISCOVERY_QUERIES = {
     "moto_apparel": "boutique motorcycle technical apparel brand {region}",
@@ -388,6 +403,7 @@ def _run_daily_target(vertical: str) -> dict:
     """
     reset_ddg_failure_count()
     reset_call_count()
+    reset_tokens_used()
     db = get_client()
 
     today_count_before = _count_today(db, vertical)
@@ -399,6 +415,7 @@ def _run_daily_target(vertical: str) -> dict:
 
     if remaining <= 0:
         print("[lead_hunter] today's target already met, exiting cleanly without searching")
+        record_tokens("lead_hunter", get_tokens_used(), get_call_count())
         return {
             "regions_processed": [],
             "leads_inserted": 0,
@@ -433,13 +450,13 @@ def _run_daily_target(vertical: str) -> dict:
         groq_budget_hit = False
 
         for region in ranked_regions:
-            if get_call_count() >= MAX_GROQ_CALLS_PER_RUN:
+            if get_tokens_used() >= MAX_GROQ_TOKENS_PER_RUN:
                 groq_budget_hit = True
                 print(
-                    f"[lead_hunter] Groq call budget reached ({get_call_count()} calls, "
-                    f"cap={MAX_GROQ_CALLS_PER_RUN}) — stopping early this run to leave headroom "
-                    f"for Enricher/Copywriter later in this job and later runs today "
-                    f"(total_inserted={total_inserted}, remaining={remaining})"
+                    f"[lead_hunter] Groq token budget reached ({get_tokens_used()} tokens, "
+                    f"cap={MAX_GROQ_TOKENS_PER_RUN}, calls={get_call_count()}) — stopping early "
+                    f"this run to leave headroom for Enricher/Copywriter later in this job and "
+                    f"later runs today (total_inserted={total_inserted}, remaining={remaining})"
                 )
                 break
 
@@ -451,7 +468,10 @@ def _run_daily_target(vertical: str) -> dict:
             if region not in regions_processed:
                 regions_processed.append(region)
 
-            print(f"[lead_hunter] (pass total={pass_inserted}, run total={total_inserted}, groq_calls={get_call_count()})")
+            print(
+                f"[lead_hunter] (pass total={pass_inserted}, run total={total_inserted}, "
+                f"groq_calls={get_call_count()}, groq_tokens_used={get_tokens_used()})"
+            )
 
             if total_inserted >= remaining:
                 break
@@ -501,7 +521,9 @@ def _run_daily_target(vertical: str) -> dict:
         "outcome": outcome,
         "ddg_failures": get_ddg_failure_count(),
         "groq_calls": get_call_count(),
+        "groq_tokens_used": get_tokens_used(),
     }
+    record_tokens("lead_hunter", get_tokens_used(), get_call_count())
     print(f"[lead_hunter] run complete: {result}")
     return result
 

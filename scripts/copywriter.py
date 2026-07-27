@@ -24,9 +24,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from common.db import get_client
-from common.groq_client import MODEL_FAST, generate
+from common.groq_client import MODEL_FAST, generate, get_call_count, get_tokens_used, reset_tokens_used
 from common.parsing import extract_json
 from common.regions import language_for_region
+from common.token_usage_log import record as record_tokens
 
 load_dotenv()
 
@@ -325,6 +326,7 @@ def select_images(vertical: str, brand_name: str, research_notes: str, catalogue
 
 
 def run(vertical: str) -> None:
+    reset_tokens_used()
     db = get_client()
     specs = load_specs(vertical)
     verified = specs.get("verified_by_hamad", False)
@@ -398,6 +400,9 @@ def run(vertical: str) -> None:
         db.table("outreach_leads").update(update_payload).eq("id", lead["id"]).execute()
 
         print(f"[copywriter] drafted {lead['domain']} images={images} target_language={target_language}")
+
+    print(f"[copywriter] run complete: groq_calls={get_call_count()}, groq_tokens_used={get_tokens_used()}")
+    record_tokens("copywriter", get_tokens_used(), get_call_count())
 
 
 if __name__ == "__main__":

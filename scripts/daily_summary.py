@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 from common.db import get_client
+from common.token_usage_log import read_and_clear as read_and_clear_tokens
 
 load_dotenv()
 
@@ -61,6 +62,17 @@ def run(vertical: str) -> None:
     )
     ddg_failures_today = sum(r.get("ddg_failures") or 0 for r in regions)
 
+    # lead_hunter/enricher/copywriter each run as a separate process in this same GH
+    # Actions job and record their own real Groq usage to a shared workspace file
+    # (common/token_usage_log.py) since they can't share memory. This is the last step,
+    # so it rolls that up into one queryable number plus a per-stage breakdown note.
+    token_usage = read_and_clear_tokens()
+    groq_tokens_used_today = sum(stage.get("tokens", 0) for stage in token_usage.values())
+    token_breakdown = ", ".join(
+        f"{stage}={data.get('tokens', 0)}tok/{data.get('calls', 0)}calls"
+        for stage, data in token_usage.items()
+    )
+
     row = {
         "vertical": vertical,
         "run_date": today,
@@ -70,6 +82,8 @@ def run(vertical: str) -> None:
         "leads_excluded_wrong_type": excluded.count or 0,
         "regions_covered_this_run": [r["region"] for r in regions],
         "ddg_failures": ddg_failures_today,
+        "groq_tokens_used": groq_tokens_used_today,
+        "notes": f"groq usage: {token_breakdown}" if token_breakdown else None,
     }
     db.table("daily_run_log").insert(row).execute()
     print(f"[daily_summary] {row}")

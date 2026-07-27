@@ -15,11 +15,12 @@ def _client() -> Groq:
     return Groq(api_key=os.environ["GROQ_API_KEY"])
 
 
-# Module-level counter, same pattern as web_search.py's ddg failure counter — lets a
-# caller (Lead Hunter) read a running total of calls it has made THIS run without
+# Module-level counters, same pattern as web_search.py's ddg failure counter — lets a
+# caller (Lead Hunter) read a running total of calls/tokens it has made THIS run without
 # threading a counter through every function signature. Reset at the start of each
 # run() invocation that wants to police its own usage.
 _call_count = 0
+_total_tokens_used = 0
 
 
 def get_call_count() -> int:
@@ -31,8 +32,17 @@ def reset_call_count() -> None:
     _call_count = 0
 
 
+def get_tokens_used() -> int:
+    return _total_tokens_used
+
+
+def reset_tokens_used() -> None:
+    global _total_tokens_used
+    _total_tokens_used = 0
+
+
 def generate(prompt: str, max_tokens: int = 1024, model: str = MODEL_QUALITY) -> str:
-    global _call_count
+    global _call_count, _total_tokens_used
     _call_count += 1
     client = _client()
     completion = client.chat.completions.create(
@@ -40,4 +50,6 @@ def generate(prompt: str, max_tokens: int = 1024, model: str = MODEL_QUALITY) ->
         messages=[{"role": "user", "content": prompt}],
         max_tokens=max_tokens,
     )
+    if completion.usage is not None:
+        _total_tokens_used += completion.usage.total_tokens
     return completion.choices[0].message.content or ""
