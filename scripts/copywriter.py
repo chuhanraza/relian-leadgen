@@ -243,6 +243,12 @@ def load_moto_email_template() -> dict:
     return json.loads(MOTO_EMAIL_TEMPLATE_PATH.read_text(encoding="utf-8"))
 
 
+MOTO_BANNER_URL = (
+    "https://raw.githubusercontent.com/chuhanraza/relian-leadgen/main/"
+    "assets/catalogue/moto_apparel/moto_banner.jpg"
+)
+
+
 def build_moto_apparel_email(brand_name: str, research_notes: str) -> tuple[str, str]:
     template = load_moto_email_template()
     specs = load_specs("moto_apparel")
@@ -263,21 +269,27 @@ def build_moto_apparel_email(brand_name: str, research_notes: str) -> tuple[str,
         f"longevity for your riders.{cert_line}"
     )
 
-    value_prop_lines = []
+    value_prop_items = []
     for vp in specs["value_props"]:
         label, rest = vp.split(":", 1)
-        value_prop_lines.append(f"- **{label.strip()}:** {rest.strip()}")
-    value_props_block = "\n".join(value_prop_lines)
+        value_prop_items.append(f"<li><b>{label.strip()}:</b> {rest.strip()}</li>")
+    value_props_block = "<ul>" + "".join(value_prop_items) + "</ul>"
+
+    banner_img = (
+        f'<img src="{MOTO_BANNER_URL}" width="600" '
+        'style="max-width:100%;display:block;" alt="Relian MFG" />'
+    )
 
     body = (
-        f"{template['greeting']},\n\n"
-        f"{opening}\n\n"
-        f"{template['philosophy']}\n\n"
-        f"{leather_paragraph}\n\n"
-        "Beyond our craftsmanship, we back our production with:\n\n"
-        f"{value_props_block}\n\n"
-        f"{template['cta']}\n\n"
-        f"{template['signoff']}"
+        f"<p>{template['greeting']},</p>"
+        f"<p>{opening}</p>"
+        f"{banner_img}"
+        f"<p>{template['philosophy']}</p>"
+        f"<p>{leather_paragraph}</p>"
+        "<p>Beyond our craftsmanship, we back our production with:</p>"
+        f"{value_props_block}"
+        f"<p>{template['cta']}</p>"
+        f"<p>{template['signoff'].replace(chr(10), '<br>')}</p>"
     )
     return template["subject"], body
 

@@ -97,6 +97,14 @@ own browser, logged into `relianmfg@gmail.com`. Steps:
 Until these secrets exist, both workflows will fail at the API-call steps — that's
 expected; trigger a manual run (`workflow_dispatch`) once they're set to confirm.
 
+**If your existing `GMAIL_REFRESH_TOKEN` predates 2026-07-28**: `SCOPES` gained
+`gmail.readonly` (needed by `scripts/reply_handler.py` to search/read INBOX — the prior
+`gmail.compose`-only scope can manage drafts but can't read arbitrary mail). Re-run step 3
+to mint a new token with both scopes, then update it in `.env` and the GitHub secret — the
+old token will keep working for the daily moto_apparel/combat_sports/EICMA pipelines
+(draft-only) but `reply_handler.py` will fail with an insufficient-scope error until
+re-minted.
+
 ### Apollo.io (optional — last-resort contact stage, not required to run the pipeline)
 
 Enricher's contact-discovery waterfall ends with an Apollo.io lookup, tried only after

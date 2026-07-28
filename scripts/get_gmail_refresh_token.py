@@ -18,7 +18,12 @@ import os
 from dotenv import load_dotenv
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-SCOPES = ["https://www.googleapis.com/auth/gmail.compose"]
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.compose",
+    # Needed by scripts/reply_handler.py to search INBOX/SENT and read thread content —
+    # gmail.compose alone only covers managing drafts, not reading arbitrary mail.
+    "https://www.googleapis.com/auth/gmail.readonly",
+]
 
 load_dotenv()
 

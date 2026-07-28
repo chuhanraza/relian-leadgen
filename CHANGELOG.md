@@ -1,5 +1,72 @@
 # Changelog
 
+## 2026-07-28 — moto_apparel HTML banner email, combat_sports attachment cleanup, reply handler
+
+Four items:
+
+1. **moto_apparel subject line**: `config/email_templates_moto_apparel.json` subject
+   changed to "Question regarding your 2027 collection sourcing".
+2. **moto_apparel: HTML email with embedded banner, no separate attachments**.
+   `build_moto_apparel_email()` (`scripts/copywriter.py`) now emits real HTML (`<p>`,
+   `<ul>`/`<li>`/`<b>` instead of markdown `**bold**`) and embeds
+   `assets/catalogue/moto_apparel/moto_banner.jpg` inline via a hosted
+   raw.githubusercontent.com `<img>` tag right after the greeting/icebreaker.
+   `scripts/sender.py` now sends moto_apparel drafts with `is_html=True` and sends no
+   individually-selected photo attachments for moto_apparel — the banner replaces them.
+   **The banner file itself is NOT yet in this repo**: the file Hamad had at
+   `~/Downloads/moto_banner.png` turned out to be a competitor's ("ANGER" brand) own
+   marketing banner — their logo, their product photography, their "Shop Now" CTA — not
+   the approved Relian MFG design (navy background, cyan corner-bracket framing, RELIAN
+   MFG header) described in the request. Did not commit it; the code path is ready and
+   will render correctly the moment the correct file lands at that path.
+3. **combat_sports: dropped redundant individual photo attachments**. `sender.py` no
+   longer attaches the 1-2 Copywriter-selected product photos for combat_sports — only
+   the existing `hand_wraps_banner.jpg` inline banner ships, since it already shows the
+   product range.
+4. **New: `scripts/reply_handler.py`** (not part of the daily pipeline — separate cron).
+   Searches the relianmfg@gmail.com mailbox for threads we started (moto_apparel,
+   combat_sports, or EICMA) whose newest message is from the customer (i.e. unreplied),
+   skips anything already in `leadgen.handled_replies` (table already existed, unused
+   until now), classifies the reply via Groq's fast model into
+   confirmed_interested/declined/asking_question/other, and drafts a reply via Groq's
+   quality model — created as a real threaded Gmail draft (`In-Reply-To`/`References`
+   headers + `threadId`), never sent. `.github/workflows/reply_handler.yml` runs it every
+   4 hours.
+   - **Required a Gmail OAuth scope change**: the existing `GMAIL_REFRESH_TOKEN` only has
+     `gmail.compose`, which manages drafts but cannot search or read arbitrary INBOX
+     messages. Added `gmail.readonly` to `SCOPES` in both
+     `scripts/common/gmail_client.py` and `scripts/get_gmail_refresh_token.py`. **Action
+     needed from Hamad**: re-run `python scripts/get_gmail_refresh_token.py` locally (this
+     re-triggers the Google consent screen for the new scope) and update the
+     `GMAIL_REFRESH_TOKEN` value in both `.env` and the GitHub Actions secret — the
+     current token will not work for this script until that's done.
+   - **Tested classification + draft quality against two real threads** (fetched via the
+     connected Gmail MCP, run through `classify_reply()`/`draft_reply_body()` directly —
+     not through the script itself, since the OAuth scope isn't live yet, and deliberately
+     without creating any Gmail draft or `handled_replies` row, to avoid touching real
+     mailbox state before Hamad reviews):
+     - **Jeremy Laget** (EICMA thread) → classified `confirmed_interested`. Generated:
+       "Dear Jérémy, Thank you for confirming your visit to our booth at EICMA 2026. We're
+       looking forward to meeting you in person and discussing how our motorcycle jackets
+       and leather gloves can support your brands, including Bm industrie, Shoes
+       industrie, Nexone, and Garibaldi. We will make sure to have a wide range of samples
+       available for you to review. If you need any assistance finding our booth during
+       the trade days, please don't hesitate to reach out. We're excited to meet you
+       there. Hamad, Relian MFG"
+       **Discrepancy found**: contrary to the request's description, this thread has NO
+       reply from us yet — Jeremy's message is still the newest one. (It's Airoh's thread,
+       not Jeremy's, that already has a sent reply — see below.) Flagging this rather than
+       creating a live draft on an assumption; the moment the new scope is live, this
+       thread will be exactly the kind of case reply_handler.py picks up for real.
+     - **Airoh** (moto_apparel thread) → classified `declined`. Generated: "Dear Luca,
+       Thank you for your prompt and courteous response. I appreciate your consideration
+       of Relian MFG, and I respect your decision. I wish Locatelli S.p.A. continued
+       success with your innovative helmets, and I hope our paths may cross again in the
+       future. Hamad, Relian MFG"
+       This thread already has a real sent reply from Hamad (2026-07-27) — confirmed
+       `find_unreplied_customer_threads()`'s logic would correctly skip it in production
+       (newest message is already ours), so no duplicate risk here.
+
 ## 2026-07-28 — Phase 2: heuristic lead-scoring signal (record-only, no gating yet)
 
 Phase 1 (upgrading off the Groq free tier) explicitly stayed out of scope per Hamad —
