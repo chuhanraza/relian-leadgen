@@ -14,6 +14,7 @@ Usage:
 """
 
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -25,7 +26,26 @@ SCOPES = [
     # gmail.compose's lighter Sensitive-scope verification takes it out of Testing mode.
 ]
 
+ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+
 load_dotenv()
+
+
+def save_refresh_token_to_env(token: str, env_path: Path = ENV_PATH) -> None:
+    """Replace (or append) GMAIL_REFRESH_TOKEN= in the .env file in place."""
+    lines = env_path.read_text().splitlines(keepends=True) if env_path.exists() else []
+
+    new_line = f"GMAIL_REFRESH_TOKEN={token}\n"
+    for i, line in enumerate(lines):
+        if line.startswith("GMAIL_REFRESH_TOKEN="):
+            lines[i] = new_line
+            break
+    else:
+        if lines and not lines[-1].endswith("\n"):
+            lines[-1] += "\n"
+        lines.append(new_line)
+
+    env_path.write_text("".join(lines))
 
 
 def main() -> None:
@@ -43,6 +63,12 @@ def main() -> None:
 
     print("\nSuccess. Store this as the GMAIL_REFRESH_TOKEN GitHub secret:\n")
     print(credentials.refresh_token)
+
+    save_refresh_token_to_env(credentials.refresh_token)
+    print(
+        "\nSaved to .env — GMAIL_REFRESH_TOKEN updated automatically. "
+        "Still copy the value above into the GitHub secret manually."
+    )
 
 
 if __name__ == "__main__":
