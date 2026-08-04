@@ -22,9 +22,11 @@ from googleapiclient.discovery import build
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.compose",
-    # Needed by search_reply_threads()/get_thread() below (reply_handler.py) — gmail.compose
-    # alone only covers managing drafts, not reading arbitrary INBOX/SENT mail.
-    "https://www.googleapis.com/auth/gmail.readonly",
+    # gmail.readonly was dropped 2026-08-05: it's a Google "Restricted" scope requiring paid
+    # CASA verification to leave Testing mode (source of the 7-day refresh-token expiry).
+    # reply_handler.py's automated thread search needed it; that automation is retired in
+    # favor of manual reply review, so gmail.compose alone now covers everything this
+    # pipeline does (drafts only, never sends).
 ]
 
 
@@ -134,8 +136,11 @@ def create_draft(
     return draft["id"]
 
 
-# ---------- reply handling (scripts/reply_handler.py) — needs gmail.readonly on top of
-# gmail.compose to search/read INBOX, unlike everything above this line. ----------
+# ---------- reply handling (scripts/reply_handler.py) — RETIRED 2026-08-05. Needs
+# gmail.readonly on top of gmail.compose to search/read INBOX, which SCOPES no longer
+# grants (see note above) — these functions will fail with insufficient-scope until/unless
+# gmail.readonly is reinstated. reply_handler.py and its workflow are disabled; reply
+# handling is manual for now. Left in place rather than deleted in case that changes. ----------
 
 
 def get_service():

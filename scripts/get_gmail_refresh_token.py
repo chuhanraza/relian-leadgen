@@ -20,9 +20,9 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.compose",
-    # Needed by scripts/reply_handler.py to search INBOX/SENT and read thread content —
-    # gmail.compose alone only covers managing drafts, not reading arbitrary mail.
-    "https://www.googleapis.com/auth/gmail.readonly",
+    # gmail.readonly dropped 2026-08-05 — see scripts/common/gmail_client.py. Re-run this
+    # script once under the reduced scope; that mint should be the last one needed before
+    # gmail.compose's lighter Sensitive-scope verification takes it out of Testing mode.
 ]
 
 load_dotenv()

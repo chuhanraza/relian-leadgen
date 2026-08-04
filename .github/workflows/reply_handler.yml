@@ -1,9 +1,17 @@
+# DISABLED 2026-08-05: reply_handler.py needs gmail.readonly to search/read INBOX, and that
+# scope was dropped from SCOPES (see scripts/common/gmail_client.py) to avoid Google's
+# CASA-verification requirement — Testing-mode gmail.readonly tokens expire every 7 days.
+# Reply handling is manual for now (Hamad reviews and pastes replies directly). Schedule
+# trigger commented out below rather than deleting the file, in case this gets revisited;
+# workflow_dispatch is left enabled for a manual test run if needed, but reply_handler.py
+# itself will fail with an insufficient-scope error under gmail.compose alone (healthcheck
+# will still pass — refreshing a token doesn't require any particular scope).
 name: reply handler
 
 on:
   workflow_dispatch: {}
-  schedule:
-    - cron: "0 */4 * * *"
+  # schedule:
+  #   - cron: "0 */4 * * *"
 
 jobs:
   handle-replies:

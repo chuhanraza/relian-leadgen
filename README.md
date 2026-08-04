@@ -97,13 +97,16 @@ own browser, logged into `relianmfg@gmail.com`. Steps:
 Until these secrets exist, both workflows will fail at the API-call steps — that's
 expected; trigger a manual run (`workflow_dispatch`) once they're set to confirm.
 
-**If your existing `GMAIL_REFRESH_TOKEN` predates 2026-07-28**: `SCOPES` gained
-`gmail.readonly` (needed by `scripts/reply_handler.py` to search/read INBOX — the prior
-`gmail.compose`-only scope can manage drafts but can't read arbitrary mail). Re-run step 3
-to mint a new token with both scopes, then update it in `.env` and the GitHub secret — the
-old token will keep working for the daily moto_apparel/combat_sports/EICMA pipelines
-(draft-only) but `reply_handler.py` will fail with an insufficient-scope error until
-re-minted.
+**As of 2026-08-05, `SCOPES` is `gmail.compose` only.** `gmail.readonly` was added
+2026-07-28 for `scripts/reply_handler.py` (INBOX search/read) and then dropped: it's a
+Google "Restricted" scope requiring paid CASA verification to leave Testing mode, which is
+what caused the `GMAIL_REFRESH_TOKEN` to expire every 7 days. `reply_handler.py` and
+`.github/workflows/reply_handler.yml` are disabled as a result — reply handling is manual
+(Hamad reviews and pastes replies directly). If your existing `GMAIL_REFRESH_TOKEN`
+predates 2026-08-05, re-run step 3 to mint a new token under the reduced scope — the
+consent screen will show fewer permissions than before, and this should be the last
+re-mint needed before `gmail.compose`'s lighter Sensitive-scope verification takes it out
+of Testing mode for good.
 
 ### Apollo.io (optional — last-resort contact stage, not required to run the pipeline)
 
