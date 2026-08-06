@@ -10,9 +10,10 @@ assets/catalogue/<vertical>/ — a missing/renamed file is skipped, not a hard f
 combat_sports also gets the standing hand-wraps banner embedded INLINE in the email
 body (INLINE_BANNERS, via gmail_client's cid: support) rather than as another attachment.
 
-moto_apparel sends no separate attachments at all: its banner is embedded directly in
-the HTML body (a hosted raw.githubusercontent.com <img> tag written by the Copywriter),
-not via gmail_client's cid: inline mechanism, so it needs no INLINE_BANNERS entry either.
+moto_apparel sends no separate attachments and no banner at all (INLINE_BANNERS has no
+entry for it): the approved Relian MFG banner artwork was never delivered (see
+CHANGELOG.md 2026-07-28), so the HTML body has no image reference to embed. Add a
+moto_apparel entry here once assets/catalogue/moto_apparel/moto_banner.jpg exists.
 
 Drafts send from a per-vertical alias (both confirmed as verified "send as" addresses on
 relianmfg@gmail.com) rather than the raw Gmail address.
