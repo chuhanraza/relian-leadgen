@@ -23,6 +23,7 @@ import sys
 from dotenv import load_dotenv
 
 from common.contact_discovery import (
+    EMAIL_RE,
     crawl_domain_secondary_pages,
     discover_contact,
     email_matches_business,
@@ -135,8 +136,14 @@ def run(vertical: str) -> None:
         if data.get("domestically_made"):
             notes += " (Flag: brand markets itself as domestically/in-house made — weaker outsourcing prospect.)"
 
-        email = data.get("contact_email")
-        if email and "@" in email:
+        # The LLM is asked for a bare email but sometimes wraps it in a sentence
+        # (e.g. "Contact X at y@z.com") despite the prompt — extract the actual
+        # address rather than trusting the raw string, so a malformed value never
+        # reaches Gmail's API as a To: header.
+        raw_email = data.get("contact_email") or ""
+        email_match = EMAIL_RE.search(raw_email)
+        email = email_match.group(0) if email_match else None
+        if email:
             if email_matches_business(lead["brand_name"], lead["domain"], email):
                 db.table("outreach_leads").update(
                     {

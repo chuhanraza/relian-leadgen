@@ -44,7 +44,7 @@ nothing else."""
 def extract_greeting(contact_name: str) -> str:
     prompt = GREETING_PROMPT.format(contact_name=contact_name)
     try:
-        text = generate(prompt, max_tokens=20, model=MODEL_FAST).strip().strip('"').rstrip(".")
+        text = generate(prompt, max_tokens=150, model=MODEL_FAST).strip().strip('"').rstrip(".")
     except Exception as exc:  # noqa: BLE001 — a bad greeting extraction shouldn't block a draft
         print(f"[eicma_campaign] greeting extraction failed for {contact_name!r}: {exc}")
         return "there"

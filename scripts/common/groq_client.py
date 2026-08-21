@@ -7,8 +7,8 @@ import os
 
 from groq import Groq
 
-MODEL_QUALITY = "llama-3.3-70b-versatile"
-MODEL_FAST = "llama-3.1-8b-instant"
+MODEL_QUALITY = "openai/gpt-oss-120b"
+MODEL_FAST = "openai/gpt-oss-20b"
 
 
 def _client() -> Groq:
@@ -45,10 +45,14 @@ def generate(prompt: str, max_tokens: int = 1024, model: str = MODEL_QUALITY) ->
     global _call_count, _total_tokens_used
     _call_count += 1
     client = _client()
+    # Both models are OpenAI gpt-oss reasoning models on Groq: they spend some of
+    # max_tokens on a hidden reasoning pass before the actual answer, so callers with
+    # tight budgets (~<100 tokens) must size for that overhead, not just the answer length.
     completion = client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": prompt}],
         max_tokens=max_tokens,
+        reasoning_effort="low",
     )
     if completion.usage is not None:
         _total_tokens_used += completion.usage.total_tokens

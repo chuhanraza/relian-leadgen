@@ -98,7 +98,7 @@ def classify_campaign(our_message: dict) -> str:
 
 def classify_reply(original_email: str, their_reply: str) -> str:
     prompt = CLASSIFY_PROMPT.format(original_email=original_email, their_reply=their_reply)
-    raw = generate(prompt, max_tokens=20, model=MODEL_FAST).strip().lower()
+    raw = generate(prompt, max_tokens=150, model=MODEL_FAST).strip().lower()
     for candidate in VALID_CLASSIFICATIONS:
         if candidate in raw:
             return candidate
