@@ -1,0 +1,31 @@
+name: "[URGENT CANARY] system health check"
+
+# Runs every 2 hours — much more often than the daily pipelines — so a break in Groq,
+# Supabase, or Gmail surfaces within hours instead of being noticed days later when a run
+# silently produces nothing. The workflow name starts with "[URGENT CANARY]" specifically
+# so GitHub's failure-run email (subject: "Run failed: <workflow name> ...") reads
+# differently from the routine moto_apparel/combat_sports failure emails already landing
+# in the same inbox — a real break must not get lost in normal notification volume.
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 */2 * * *"
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    env:
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+      GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+      GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - name: "[URGENT CANARY] run health check"
+        run: python scripts/canary_check.py
