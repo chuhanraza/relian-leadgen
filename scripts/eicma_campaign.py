@@ -28,9 +28,19 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 WAVES_DIR = BASE_DIR / "config" / "eicma_waves"
+BRANDING_DIR = BASE_DIR / "assets" / "branding"
 
 DAILY_BATCH_SIZE = 20
 FROM_EMAIL = "hm@relianmfg.com"
+
+# Waves whose template embeds a single approved banner inline via cid: (gmail_client's
+# inline_image_path/inline_image_cid — the same mechanism used for combat_sports'
+# hand_wraps_banner) instead of assembling the header from separate raw.githubusercontent.com
+# <img> tags the way wave_1 does. The cid here must match the cid: referenced in the
+# corresponding wave_N.html.
+WAVE_INLINE_BANNERS = {
+    2: (BRANDING_DIR / "eicma_wave2_banner.jpg", "eicma-wave2-banner"),
+}
 
 GREETING_PROMPT = """This is a messy CRM contact name field: "{contact_name}"
 It may contain a person's name, a company name, both, or neither cleanly.
@@ -107,6 +117,8 @@ def run() -> None:
     )
     print(f"[eicma_campaign] wave={actual_wave} batch={len(contacts)}")
 
+    inline_banner_path, inline_banner_cid = WAVE_INLINE_BANNERS.get(actual_wave, (None, None))
+
     for contact in contacts:
         greeting = extract_greeting(contact["contact_name"] or "")
         rendered_html = html_template.replace("{{GREETING}}", greeting)
@@ -118,6 +130,8 @@ def run() -> None:
                 body=rendered_html,
                 from_email=FROM_EMAIL,
                 is_html=True,
+                inline_image_path=inline_banner_path,
+                inline_image_cid=inline_banner_cid or "banner-image",
             )
         except Exception as exc:  # noqa: BLE001 — one failed draft shouldn't block the rest
             print(f"[eicma_campaign] failed for {contact['email']}: {exc}")

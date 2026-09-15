@@ -100,10 +100,16 @@ def create_draft(
 
     if inline_data is not None:
         html_body = body if is_html else _plain_text_to_html(body)
-        html_body += (
-            f'<br><img src="cid:{inline_image_cid}" alt="" '
-            'style="max-width:600px;width:100%;height:auto;margin-top:16px;">'
-        )
+        # A caller whose template already places its own <img src="cid:..."> (e.g. a
+        # full-document wave template with the banner positioned in its header) has
+        # already done this; only append a trailing image for callers passing a
+        # plain body/paragraph fragment that doesn't reference the cid itself
+        # (e.g. combat_sports' hand_wraps_banner), so the banner isn't duplicated.
+        if f"cid:{inline_image_cid}" not in html_body:
+            html_body += (
+                f'<br><img src="cid:{inline_image_cid}" alt="" '
+                'style="max-width:600px;width:100%;height:auto;margin-top:16px;">'
+            )
         related = MIMEMultipart("related")
         related.attach(MIMEText(html_body, "html"))
         image_part = MIMEImage(inline_data)
