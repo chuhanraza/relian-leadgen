@@ -40,6 +40,7 @@ FROM_EMAIL = "hm@relianmfg.com"
 # corresponding wave_N.html.
 WAVE_INLINE_BANNERS = {
     2: (BRANDING_DIR / "eicma_wave2_banner.jpg", "eicma-wave2-banner"),
+    3: (BRANDING_DIR / "eicma_wave3_banner.jpg", "eicma-wave3-banner"),
 }
 
 GREETING_PROMPT = """This is a messy CRM contact name field: "{contact_name}"
