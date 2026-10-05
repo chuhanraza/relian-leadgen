@@ -10,10 +10,10 @@ subject/design every time it completes a full pass over the non-suppressed conta
   won't inline local file paths.
 - `wave_N.json` — `{"subject": "..."}` for that wave.
 
-## Adding a new wave
+## Rotation (changed 2026-10-06)
 
-Once `leadgen.eicma_campaign_state.current_wave` advances past the highest numbered pair on
-disk (i.e. a full pass just completed and there's no `wave_(N+1).html`/`.json` yet), the
-script keeps using the highest available wave and prints a `NEEDS NEW WAVE DESIGN` notice
-in the run log instead of failing. Add `wave_(N+1).html` + `wave_(N+1).json` before the next
-scheduled run to have the new wave picked up automatically — no code change needed.
+Waves no longer rotate on a full-list pass — that loop is removed. Each contact's wave follows
+their own `cycle_number` (0 -> wave_1, 1 -> wave_2, 2 -> wave_3), capped at 3 drafts and
+14 days apart (see `scripts/eicma_campaign.py`). `wave_4` is the single final reminder: it is
+only used when `EICMA_FINAL_REMINDER=1` is set and is not picked up by the regular run.
+Missing wave files are an error; there is no fallback to the highest wave on disk.

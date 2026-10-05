@@ -1,21 +1,35 @@
 """EICMA invitation campaign. Separate from the moto_apparel/combat_sports cold-outreach
-pipeline — reads/writes leadgen.eicma_invitations + leadgen.eicma_campaign_state only.
+pipeline — reads/writes leadgen.eicma_invitations only.
 
-Sends (drafts) up to DAILY_BATCH_SIZE invitations per run, always excluding
-suppressed=true contacts. Never contacted contacts go first, then oldest last_sent_at,
-so the list gets even coverage. When every non-suppressed contact has been drafted at
-least once in the current pass, advances current_wave and resets last_sent_at so the
-next run starts a fresh pass — under a new wave design if one exists on disk.
+Sends (drafts) up to DAILY_BATCH_SIZE invitations per run. Hard limits, enforced in code:
+  * suppressed=true contacts are never drafted.
+  * a contact is never drafted at cycle_number >= MAX_CYCLES (3 regular waves, then done).
+  * a contact is never drafted within MIN_DAYS_BETWEEN (14) days of last_sent_at.
+  * the list is never reset or looped — last_sent_at is never cleared and
+    eicma_campaign_state.current_wave is no longer advanced (the old pass/reset loop mailed
+    contacts up to 11 times).
+A contact's wave follows its own cycle: cycle 0 -> wave_1, 1 -> wave_2, 2 -> wave_3.
+
+wave_4 is the single FINAL reminder. It is never used by the regular run; it only runs when
+EICMA_FINAL_REMINDER=1 is set, goes to non-suppressed contacts that have not already had
+wave_4, still honours the 14-day gap, and is the one deliberate exception to MAX_CYCLES.
 
 Same hard rule as the rest of this repo: only ever calls gmail drafts().create, never
 messages().send. Hamad reviews and bulk-sends drafts manually.
 
 Usage:
-  python scripts/eicma_campaign.py
+  python scripts/eicma_campaign.py            # regular run (waves 1-3, capped)
+  python scripts/eicma_campaign.py --report   # print eligibility counts, create nothing
+  EICMA_FINAL_REMINDER=1 python scripts/eicma_campaign.py   # wave_4 final reminder
 """
 
+from __future__ import annotations
+
 import json
-from datetime import datetime, timezone
+import os
+import re
+import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -31,6 +45,10 @@ WAVES_DIR = BASE_DIR / "config" / "eicma_waves"
 BRANDING_DIR = BASE_DIR / "assets" / "branding"
 
 DAILY_BATCH_SIZE = 20
+MAX_CYCLES = 3
+MIN_DAYS_BETWEEN = 14
+REGULAR_WAVES = (1, 2, 3)
+FINAL_WAVE = 4
 FROM_EMAIL = "hm@relianmfg.com"
 
 # Waves whose template embeds a single approved banner inline via cid: (gmail_client's
@@ -41,6 +59,8 @@ FROM_EMAIL = "hm@relianmfg.com"
 WAVE_INLINE_BANNERS = {
     2: (BRANDING_DIR / "eicma_wave2_banner.jpg", "eicma-wave2-banner"),
     3: (BRANDING_DIR / "eicma_wave3_banner.jpg", "eicma-wave3-banner"),
+    # wave_4 reuses the approved wave_3 banner file under its own cid.
+    4: (BRANDING_DIR / "eicma_wave3_banner.jpg", "eicma-wave4-banner"),
 }
 
 GREETING_PROMPT = """This is a messy CRM contact name field: "{contact_name}"
@@ -66,61 +86,84 @@ def extract_greeting(contact_name: str) -> str:
     return text or "there"
 
 
-def available_waves() -> list[int]:
-    numbers = []
-    for path in WAVES_DIR.glob("wave_*.html"):
-        try:
-            n = int(path.stem.split("_")[1])
-        except (IndexError, ValueError):
-            continue
-        if (WAVES_DIR / f"wave_{n}.json").exists():
-            numbers.append(n)
-    return sorted(numbers)
+def load_wave(wave_number: int) -> tuple[str, str]:
+    """Returns (html, subject) for an exact wave. No fallback — a missing wave is an error,
+    not a reason to silently mail a different design."""
+    html_path = WAVES_DIR / f"wave_{wave_number}.html"
+    json_path = WAVES_DIR / f"wave_{wave_number}.json"
+    if not (html_path.exists() and json_path.exists()):
+        raise SystemExit(f"[eicma_campaign] wave_{wave_number} template missing in {WAVES_DIR}")
+    subject = json.loads(json_path.read_text(encoding="utf-8"))["subject"]
+    return html_path.read_text(encoding="utf-8"), subject
 
 
-def load_wave(wave_number: int) -> tuple[int, str, str]:
-    """Returns (actual_wave_used, html, subject). Falls back to the highest wave on disk
-    and prints a NEEDS NEW WAVE DESIGN notice if wave_number isn't available yet."""
-    waves = available_waves()
-    if not waves:
-        raise SystemExit(f"[eicma_campaign] no wave templates found in {WAVES_DIR}")
-
-    actual = wave_number if wave_number in waves else max(waves)
-    if actual != wave_number:
-        print(
-            f"[eicma_campaign] NEEDS NEW WAVE DESIGN — wave_{wave_number} not found, "
-            f"falling back to wave_{actual} (highest available)."
-        )
-
-    html = (WAVES_DIR / f"wave_{actual}.html").read_text(encoding="utf-8")
-    subject = json.loads((WAVES_DIR / f"wave_{actual}.json").read_text(encoding="utf-8"))["subject"]
-    return actual, html, subject
+def _parse_ts(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    # Postgres emits 1-6 fractional digits; Python <3.11 fromisoformat only accepts 3 or 6.
+    value = re.sub(r"\.(\d+)", lambda m: "." + m.group(1).ljust(6, "0")[:6], value)
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def get_campaign_state(db) -> int:
-    row = db.table("eicma_campaign_state").select("current_wave").eq("id", 1).maybe_single().execute().data
-    return row["current_wave"] if row else 1
+def is_eligible(contact: dict, now: datetime, final: bool = False) -> bool:
+    """The hard limits. Single source of truth for both the run and --report."""
+    if contact.get("suppressed"):
+        return False
+    last_sent = _parse_ts(contact.get("last_sent_at"))
+    if last_sent and now - last_sent < timedelta(days=MIN_DAYS_BETWEEN):
+        return False
+    if final:
+        return contact.get("last_wave_design") != f"wave_{FINAL_WAVE}"
+    return (contact.get("cycle_number") or 0) < MAX_CYCLES
+
+
+def wave_for(contact: dict, final: bool) -> int:
+    if final:
+        return FINAL_WAVE
+    return REGULAR_WAVES[min(contact.get("cycle_number") or 0, len(REGULAR_WAVES) - 1)]
+
+
+def fetch_contacts(db) -> list[dict]:
+    return db.table("eicma_invitations").select("*").limit(5000).execute().data
+
+
+def report(contacts: list[dict], now: datetime) -> None:
+    active = [c for c in contacts if not c.get("suppressed")]
+    over_cap = [c for c in active if (c.get("cycle_number") or 0) >= MAX_CYCLES]
+    print(f"[eicma_campaign] total={len(contacts)} suppressed={len(contacts) - len(active)} "
+          f"non_suppressed={len(active)}")
+    print(f"[eicma_campaign] non-suppressed at/over cap (cycle>={MAX_CYCLES}): {len(over_cap)}")
+    print(f"[eicma_campaign] eligible for regular waves: "
+          f"{sum(is_eligible(c, now) for c in contacts)}")
+    print(f"[eicma_campaign] eligible for wave_{FINAL_WAVE} final reminder: "
+          f"{sum(is_eligible(c, now, final=True) for c in contacts)}")
 
 
 def run() -> None:
+    final = os.environ.get("EICMA_FINAL_REMINDER") == "1"
     db = get_client()
-    current_wave = get_campaign_state(db)
-    actual_wave, html_template, subject = load_wave(current_wave)
+    now = datetime.now(timezone.utc)
+    all_contacts = fetch_contacts(db)
 
-    contacts = (
-        db.table("eicma_invitations")
-        .select("*")
-        .eq("suppressed", False)
-        .order("last_sent_at", desc=False, nullsfirst=True)
-        .limit(DAILY_BATCH_SIZE)
-        .execute()
-        .data
-    )
-    print(f"[eicma_campaign] wave={actual_wave} batch={len(contacts)}")
+    if "--report" in sys.argv:
+        report(all_contacts, now)
+        return
 
-    inline_banner_path, inline_banner_cid = WAVE_INLINE_BANNERS.get(actual_wave, (None, None))
+    eligible = [c for c in all_contacts if is_eligible(c, now, final)]
+    eligible.sort(key=lambda c: (c.get("last_sent_at") is not None, c.get("last_sent_at") or ""))
+    contacts = eligible[:DAILY_BATCH_SIZE]
+    print(f"[eicma_campaign] mode={'final' if final else 'regular'} "
+          f"eligible={len(eligible)} batch={len(contacts)}")
+
+    templates: dict[int, tuple[str, str]] = {}
 
     for contact in contacts:
+        wave = wave_for(contact, final)
+        if wave not in templates:
+            templates[wave] = load_wave(wave)
+        html_template, subject = templates[wave]
+        inline_banner_path, inline_banner_cid = WAVE_INLINE_BANNERS.get(wave, (None, None))
+
         greeting = extract_greeting(contact["contact_name"] or "")
         rendered_html = html_template.replace("{{GREETING}}", greeting)
 
@@ -142,28 +185,12 @@ def run() -> None:
             {
                 "last_sent_at": datetime.now(timezone.utc).isoformat(),
                 "status": "drafted",
-                "last_wave_design": f"wave_{actual_wave}",
+                "last_wave_design": f"wave_{wave}",
                 "cycle_number": (contact.get("cycle_number") or 0) + 1,
             }
         ).eq("id", contact["id"]).execute()
-        print(f"[eicma_campaign] drafted {draft_id} for {contact['email']} greeting={greeting!r}")
-
-    remaining = (
-        db.table("eicma_invitations")
-        .select("id", count="exact")
-        .eq("suppressed", False)
-        .is_("last_sent_at", "null")
-        .execute()
-        .count
-    )
-    if remaining == 0:
-        next_wave = current_wave + 1
-        db.table("eicma_campaign_state").update({"current_wave": next_wave}).eq("id", 1).execute()
-        db.table("eicma_invitations").update({"last_sent_at": None}).eq("suppressed", False).execute()
-        print(
-            f"[eicma_campaign] full pass complete — advancing to wave_{next_wave}, "
-            "reset last_sent_at for next pass"
-        )
+        print(f"[eicma_campaign] drafted {draft_id} for {contact['email']} "
+              f"wave_{wave} greeting={greeting!r}")
 
 
 if __name__ == "__main__":
