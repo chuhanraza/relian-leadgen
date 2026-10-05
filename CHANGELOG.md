@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-10-06 — reject helpdesk inboxes, named contacts first, tighter size filter
+
+412 drafts produced zero buyer replies; all 5 replies were helpdesk/auto-replies.
+- `contact_discovery.py`: `is_helpdesk_email()` hard-rejects support/service/customerservice/
+  help/care/contact.us/orders/returns/noreply/compliance/ethics/feedback/... local-parts and
+  fourthwall/reamaze/zendesk/freshdesk/gorgias/helpscout domains. New `email_acceptable()`
+  gate (helpdesk -> `email_matches_business` (unchanged) -> generic-role rule) used by the
+  enricher on every path. info@/sales@/hello@/wholesale@/b2b@ kept only when no named
+  mailbox exists; the site crawl now collects all emails and prefers a named one.
+- `lead_hunter.py` verify: size filter (public, >200 employees, multi-brand retailer,
+  third-party brands, global footprint) enforced in code, verify now uses MODEL_QUALITY.
+- Apollo named-contact-first step NOT implemented: no APOLLO_API_KEY in .env; zero
+  `[Apollo:` markers in research_notes suggests it never ran in CI.
+- Backfill: existing drafts with helpdesk addresses tagged `[HELPDESK_ADDRESS]` (none deleted).
+
 ## 2026-07-28 — moto_apparel HTML banner email, combat_sports attachment cleanup, reply handler
 
 Four items:

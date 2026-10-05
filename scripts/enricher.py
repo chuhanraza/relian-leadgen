@@ -26,8 +26,9 @@ from common.contact_discovery import (
     EMAIL_RE,
     crawl_domain_secondary_pages,
     discover_contact,
-    email_matches_business,
+    email_acceptable,
     get_last_apollo_outcome,
+    is_generic_role_email,
     reset_apollo_call_count,
 )
 from common.db import get_client
@@ -143,8 +144,23 @@ def run(vertical: str) -> None:
         raw_email = data.get("contact_email") or ""
         email_match = EMAIL_RE.search(raw_email)
         email = email_match.group(0) if email_match else None
+        # Every discovered email goes through email_acceptable(): helpdesk addresses are
+        # hard-rejected, email_matches_business still applies, and generic role inboxes
+        # (info@/sales@/...) are only kept when the site shows no named person. Lead size
+        # is already gated by lead_hunter's verify step, so company_small=True here.
+        crawled = None
         if email:
-            if email_matches_business(lead["brand_name"], lead["domain"], email):
+            ok, why = email_acceptable(lead["brand_name"], lead["domain"], email)
+            if ok and is_generic_role_email(email):
+                # Named contacts first: a generic inbox is only kept if the crawl can't
+                # surface a named mailbox on the lead's own domain.
+                crawled = crawl_domain_secondary_pages(website_url) or ""
+                if crawled and not is_generic_role_email(crawled):
+                    ok2, _ = email_acceptable(lead["brand_name"], lead["domain"], crawled)
+                    if ok2:
+                        email, ok = crawled, True
+                        print(f"[enricher] {lead['domain']}: upgraded generic inbox to named contact")
+            if ok:
                 db.table("outreach_leads").update(
                     {
                         "research_notes": notes,
@@ -156,10 +172,15 @@ def run(vertical: str) -> None:
                 ).eq("id", lead["id"]).execute()
                 print(f"[enricher] {lead['domain']}: email_found=True (primary)")
                 continue
-            print(f"[enricher] rejected mismatched email {email} for {lead['domain']}")
+            print(f"[enricher] rejected {email} for {lead['domain']}: {why}")
+            if why == "helpdesk_address":
+                notes = f"{notes} [rejected helpdesk address at enrichment]".strip()
 
-        if secondary_email := crawl_domain_secondary_pages(website_url):
-            if email_matches_business(lead["brand_name"], lead["domain"], secondary_email):
+        if crawled is None:
+            crawled = crawl_domain_secondary_pages(website_url)
+        if secondary_email := crawled:
+            ok, why = email_acceptable(lead["brand_name"], lead["domain"], secondary_email)
+            if ok:
                 db.table("outreach_leads").update(
                     {
                         "research_notes": notes,
@@ -171,7 +192,7 @@ def run(vertical: str) -> None:
                 ).eq("id", lead["id"]).execute()
                 print(f"[enricher] {lead['domain']}: email_found=True (secondary_page_crawl)")
                 continue
-            print(f"[enricher] rejected mismatched email {secondary_email} for {lead['domain']}")
+            print(f"[enricher] rejected {secondary_email} for {lead['domain']}: {why}")
 
         fallback = discover_contact(
             lead["brand_name"], lead["region"], apollo_max_calls_per_run=APOLLO_MAX_CALLS_PER_RUN
@@ -182,9 +203,11 @@ def run(vertical: str) -> None:
             print(f"[enricher] {lead['domain']}: apollo_outcome={apollo_outcome}")
 
         fallback_email = fallback["email"]
-        if fallback_email and not email_matches_business(lead["brand_name"], lead["domain"], fallback_email):
-            print(f"[enricher] rejected mismatched email {fallback_email} for {lead['domain']} (fallback:{fallback['method']})")
-            fallback_email = None
+        if fallback_email:
+            ok, why = email_acceptable(lead["brand_name"], lead["domain"], fallback_email)
+            if not ok:
+                print(f"[enricher] rejected {fallback_email} for {lead['domain']} (fallback:{fallback['method']}): {why}")
+                fallback_email = None
 
         if fallback_email:
             db.table("outreach_leads").update(

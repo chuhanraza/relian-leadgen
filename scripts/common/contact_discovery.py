@@ -31,9 +31,66 @@ REQUEST_HEADERS = {"User-Agent": "Mozilla/5.0"}
 GENERIC_EMAIL_PROVIDERS = {"gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com"}
 
 
+# Helpdesk / support-desk inboxes: a ticketing queue, never a buyer. 412 cold drafts to
+# these (and similar) produced zero buyer replies — every reply was an auto-response from
+# one. Hard-rejected everywhere an email is accepted.
+HELPDESK_LOCAL_PART_RE = re.compile(
+    r"^(support|service|services|customer[._-]?service|customer[._-]?care|customer[._-]?support|"
+    r"cs|help|helpdesk|care|contact[._-]?us|contactus|orders?|returns?|refunds?|billing|"
+    r"no[._-]?reply|do[._-]?not[._-]?reply|donotreply|mailer-daemon|postmaster|abuse|"
+    r"pedidos|atencionalcliente|atencion|servicio|kundenservice|serviceclient|"
+    r"compliance|ethics|feedback|privacy|legal|gdpr|dpo|security|press|media|careers|jobs|hr|"
+    r"recruitment|accounts|accounting|invoices?|warranty|claims|complaints)$"
+)
+HELPDESK_PLATFORM_DOMAINS = (
+    "fourthwall", "reamaze", "zendesk", "freshdesk", "gorgias", "helpscout", "freshservice",
+    "desk.com", "kayako", "happyfox",
+)
+# Generic role inboxes that are only acceptable when no named person exists for the
+# company (and the company is small — see email_acceptable).
+ALLOWED_GENERIC_LOCAL_PARTS = frozenset(
+    {"info", "sales", "hello", "wholesale", "b2b", "contact", "hi", "team", "enquiries", "enquiry"}
+)
+
+
+def is_helpdesk_email(email: str) -> bool:
+    local, _, domain = email.strip().lower().partition("@")
+    if HELPDESK_LOCAL_PART_RE.match(local):
+        return True
+    return any(p in domain for p in HELPDESK_PLATFORM_DOMAINS)
+
+
+def is_generic_role_email(email: str) -> bool:
+    return email.strip().lower().split("@")[0] in ALLOWED_GENERIC_LOCAL_PARTS
+
+
+def email_acceptable(
+    brand_name: str,
+    lead_domain: str,
+    email: str,
+    *,
+    named_contact_exists: bool = False,
+    company_small: bool = True,
+) -> tuple[bool, str]:
+    """Single gate for every discovered email. Returns (ok, reason).
+    1. helpdesk/support-desk local-parts and ticketing-platform domains: always rejected.
+    2. email_matches_business (unchanged): must belong to this business.
+    3. info@/sales@/hello@/wholesale@/b2b@ style inboxes: only when no named person
+       exists AND the company is small. Any other local-part is treated as a named
+       person / specific mailbox and passes.
+    """
+    if is_helpdesk_email(email):
+        return False, "helpdesk_address"
+    if not email_matches_business(brand_name, lead_domain, email):
+        return False, "business_mismatch"
+    if is_generic_role_email(email) and (named_contact_exists or not company_small):
+        return False, "generic_role_with_named_contact_or_large_company"
+    return True, "ok"
+
+
 def _valid_email(candidates: list[str]) -> str | None:
     for e in candidates:
-        if not any(d in e.lower() for d in IGNORED_EMAIL_DOMAINS):
+        if not any(d in e.lower() for d in IGNORED_EMAIL_DOMAINS) and not is_helpdesk_email(e):
             return e
     return None
 
@@ -121,6 +178,7 @@ def crawl_domain_secondary_pages(website_url: str, max_pages: int = 5) -> str | 
     if not urls_to_check:
         return None
 
+    found: list[str] = []
     for url in urls_to_check[:max_pages]:
         try:
             resp = requests.get(url, timeout=8, headers=REQUEST_HEADERS)
@@ -132,13 +190,29 @@ def crawl_domain_secondary_pages(website_url: str, max_pages: int = 5) -> str | 
             if a["href"].lower().startswith("mailto:"):
                 email = a["href"].split(":", 1)[1].split("?")[0].strip().lower()
                 if EMAIL_RE.match(email):
-                    return email
+                    found.append(email)
 
         for match in EMAIL_RE.findall(soup.get_text(" ")):
             e = match.lower().rstrip(".")
             if not any(e.endswith(s) for s in IGNORE_EMAIL_SUFFIXES):
-                return e
-    return None
+                found.append(e)
+
+    return pick_best_email(found, website_url)
+
+
+def pick_best_email(candidates: list[str], website_url: str = "") -> str | None:
+    """Prefer a named-person/specific mailbox on the lead's own domain over a generic
+    role inbox; never return a helpdesk address. Order-preserving within each tier.
+    """
+    seen, usable = set(), []
+    for e in candidates:
+        e = e.strip().lower()
+        if e in seen or any(d in e for d in IGNORED_EMAIL_DOMAINS) or is_helpdesk_email(e):
+            continue
+        seen.add(e)
+        usable.append(e)
+    named = [e for e in usable if not is_generic_role_email(e)]
+    return (named or usable or [None])[0]
 
 
 def try_overpass(brand_name: str, region: str) -> str | None:
@@ -167,7 +241,7 @@ def try_overpass(brand_name: str, region: str) -> str | None:
         resp.raise_for_status()
         for el in resp.json().get("elements", []):
             tags = el.get("tags", {})
-            if tags.get("contact:email"):
+            if tags.get("contact:email") and not is_helpdesk_email(tags["contact:email"]):
                 return tags["contact:email"]
     except Exception:  # noqa: BLE001 — best-effort fallback stage
         return None

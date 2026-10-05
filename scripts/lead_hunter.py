@@ -24,6 +24,7 @@ from dotenv import load_dotenv
 from common.db import get_client
 from common.groq_client import (
     MODEL_FAST,
+    MODEL_QUALITY,
     generate,
     get_call_count,
     get_tokens_used,
@@ -113,6 +114,9 @@ key: brand_name. No other text. Empty array if nothing qualifies.
 """,
 }
 
+# Size filter ceiling: above this headcount a brand is not a boutique/mid-size prospect.
+MAX_EMPLOYEES = 200
+
 VERIFY_PROMPTS = {
     "moto_apparel": """Candidate: "{brand_name}" (a possible motorcycle apparel brand, region: {region})
 
@@ -145,12 +149,41 @@ Homepage text of the top likely match (may be empty if unfetchable):
    investor-relations language, "since 18xx" heritage branding, dozens
    of international retail locations), this fails.
 
+SIZE FILTER (applies on top of every step above; any one of these means qualifies=false):
+ a. PUBLICLY TRADED, or a subsidiary/brand of a publicly traded company (stock ticker,
+    investor-relations pages, "NYSE"/"NASDAQ"/"LSE"/"ASX" listing, annual reports).
+ b. MORE THAN ~200 EMPLOYEES (use your own knowledge of the company plus any "team of N",
+    careers-page, store-count or revenue signals in the text). Venture-backed
+    scale-ups, brands with dozens of stores, and global distribution networks are over this line.
+ c. A MULTI-BRAND RETAILER, marketplace, or wholesale distributor that mainly sells OTHER
+    companies' brands (e.g. a motorcycle gear superstore or a catalogue/mail-order retailer
+    carrying many labels). A single-label brand or a gym/shop with its own small range is fine.
+ d. OBSERVABLE SCALE SIGNALS — set the matching flag below to true if ANY is evident from
+    the text or your own knowledge (do not low-ball because the page doesn't say):
+      - sells_third_party_brands: the site carries other companies' labels (a "Shop by
+        brand"/"Brands" menu listing several brands, or a catalogue mixing own-label and
+        third-party products). A company that makes its own label BUT ALSO runs a retail
+        shop/catalogue carrying other companies' labels counts as true. Selling only its
+        own label is false.
+      - global_footprint: its own offices/subsidiaries/stores or national distributors in
+        3+ countries, OR it is an official apparel/equipment partner of a major league,
+        federation or promotion (e.g. UFC, MotoGP, FIFA, Olympic bodies), OR it has
+        elite-athlete sponsorship across multiple countries. Merely shipping worldwide
+        from one country does not count.
+ If you are unsure whether a company is over these limits but it is a widely recognised
+ international name, treat it as TOO LARGE and reject.
+
 Reply with ONLY a fenced ```json code block, a single object with exactly these keys:
 - qualifies: boolean (true only if you found their real official site, it's a brand not a
   manufacturer/distributor, AND it passes the independent boutique/mid-size check in step 3)
 - domain: bare domain (e.g. example.com) of their official site, or null
 - website_url: full URL, or null
-- one_line_reasoning: string (state explicitly if it failed step 3 specifically)
+- one_line_reasoning: string (state explicitly if it failed step 3 or the size filter)
+- employee_estimate: integer best estimate of headcount, or null if unknown
+- publicly_traded: boolean (true if public or owned by a public company)
+- multi_brand_retailer: boolean
+- sells_third_party_brands: boolean
+- global_footprint: boolean
 No other text.
 """,
     "combat_sports": """Candidate: "{brand_name}" (a possible combat-sports gym/shop/brand, region: {region})
@@ -176,6 +209,30 @@ Homepage text of the top likely match (may be empty if unfetchable):
    (national or international), and NOT a big-box retail chain
    masquerading as a "shop" — if so, disqualify regardless of category
    fit, even if it otherwise looks like a good match.
+
+SIZE FILTER (applies on top of every step above; any one of these means qualifies=false):
+ a. PUBLICLY TRADED, or a subsidiary/brand of a publicly traded company (stock ticker,
+    investor-relations pages, "NYSE"/"NASDAQ"/"LSE"/"ASX" listing, annual reports).
+ b. MORE THAN ~200 EMPLOYEES (use your own knowledge of the company plus any "team of N",
+    careers-page, store-count or revenue signals in the text). Venture-backed
+    scale-ups, brands with dozens of stores, and global distribution networks are over this line.
+ c. A MULTI-BRAND RETAILER, marketplace, or wholesale distributor that mainly sells OTHER
+    companies' brands (e.g. a motorcycle gear superstore or a catalogue/mail-order retailer
+    carrying many labels). A single-label brand or a gym/shop with its own small range is fine.
+ d. OBSERVABLE SCALE SIGNALS — set the matching flag below to true if ANY is evident from
+    the text or your own knowledge (do not low-ball because the page doesn't say):
+      - sells_third_party_brands: the site carries other companies' labels (a "Shop by
+        brand"/"Brands" menu listing several brands, or a catalogue mixing own-label and
+        third-party products). A company that makes its own label BUT ALSO runs a retail
+        shop/catalogue carrying other companies' labels counts as true. Selling only its
+        own label is false.
+      - global_footprint: its own offices/subsidiaries/stores or national distributors in
+        3+ countries, OR it is an official apparel/equipment partner of a major league,
+        federation or promotion (e.g. UFC, MotoGP, FIFA, Olympic bodies), OR it has
+        elite-athlete sponsorship across multiple countries. Merely shipping worldwide
+        from one country does not count.
+ If you are unsure whether a company is over these limits but it is a widely recognised
+ international name, treat it as TOO LARGE and reject.
 4. Classify into exactly one sub_type: core_gym (a gym/academy), shop_distributor (a shop
    or distributor), or small_brand (a small private gear brand).
 
@@ -185,6 +242,11 @@ Reply with ONLY a fenced ```json code block, a single object with exactly these 
 - website_url: full URL, or null
 - sub_type: one of "core_gym", "shop_distributor", "small_brand", or null
 - one_line_reasoning: string
+- employee_estimate: integer best estimate of headcount, or null if unknown
+- publicly_traded: boolean (true if public or owned by a public company)
+- multi_brand_retailer: boolean
+- sells_third_party_brands: boolean
+- global_footprint: boolean
 No other text.
 """,
 }
@@ -262,10 +324,21 @@ def verify_candidate(vertical: str, brand_name: str, region: str) -> dict | None
         page_text=page_text or "(could not fetch a page)",
     )
     try:
-        raw = generate(prompt, max_tokens=512, model=MODEL_FAST)
+        raw = generate(prompt, max_tokens=1024, model=MODEL_QUALITY)  # size filter needs real brand knowledge; 20b was unstable
         data = extract_json(raw)
     except Exception as exc:  # noqa: BLE001 — one candidate's failure shouldn't kill the run
         print(f"[lead_hunter] verify failed for {brand_name!r}: {exc}")
+        return None
+
+    # Code-level size gate: don't rely on the model setting qualifies=false itself.
+    emp = data.get("employee_estimate")
+    if (
+        data.get("publicly_traded") is True
+        or data.get("multi_brand_retailer") is True
+        or data.get("sells_third_party_brands") is True
+        or data.get("global_footprint") is True
+        or (isinstance(emp, (int, float)) and emp > MAX_EMPLOYEES)
+    ):
         return None
 
     domain = data.get("domain")
