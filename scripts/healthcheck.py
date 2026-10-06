@@ -20,12 +20,22 @@ load_dotenv()
 def check_groq() -> None:
     import os
 
-    from common.groq_client import generate
+    from common.groq_client import GroqQuotaExhausted, generate
 
     key = os.environ.get("GROQ_API_KEY", "")
     print(f"[healthcheck] Groq key fingerprint: ...{key[-4:] if len(key) >= 4 else '????'}")
 
-    reply = generate("Reply with exactly: OK", max_tokens=150)
+    try:
+        reply = generate("Reply with exactly: OK", max_tokens=150)
+    except GroqQuotaExhausted as exc:
+        # The key is VALID (Groq answered with a rate-limit, not an auth error) — the free
+        # daily quota is just spent. That is a normal free-tier day, not a broken credential:
+        # shout about it, but do not fail the job (which would email a false failure alert).
+        # generate() has already tripped the circuit breaker, so later stages make no model calls.
+        print("[healthcheck] " + "!" * 60)
+        print(f"[healthcheck] GROQ DAILY QUOTA EXHAUSTED — key is valid, model stages will be skipped: {exc}")
+        print("[healthcheck] " + "!" * 60)
+        return "key valid, DAILY QUOTA EXHAUSTED (model stages skipped)"
     if "OK" not in reply.upper():
         raise RuntimeError(f"unexpected response: {reply!r}")
 
@@ -52,8 +62,8 @@ def main() -> None:
     failures = []
     for name, fn in checks.items():
         try:
-            fn()
-            print(f"[healthcheck] {name}: OK")
+            note = fn()
+            print(f"[healthcheck] {name}: OK" + (f" — {note}" if note else ""))
         except Exception as exc:  # noqa: BLE001 — want the message, not to classify the error
             print(f"[healthcheck] {name}: FAILED — {exc}")
             failures.append(name)

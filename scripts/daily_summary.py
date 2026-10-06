@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 from common.db import get_client
+from common.groq_client import quota_tripped
 from common.token_usage_log import read_and_clear as read_and_clear_tokens
 
 load_dotenv()
@@ -68,10 +69,13 @@ def run(vertical: str) -> None:
     # so it rolls that up into one queryable number plus a per-stage breakdown note.
     token_usage = read_and_clear_tokens()
     groq_tokens_used_today = sum(stage.get("tokens", 0) for stage in token_usage.values())
-    token_breakdown = ", ".join(
-        f"{stage}={data.get('tokens', 0)}tok/{data.get('calls', 0)}calls"
-        for stage, data in token_usage.items()
-    )
+    def _stage_note(stage: str, data: dict) -> str:
+        extras = " ".join(f"{k}={str(v).lower()}" for k, v in data.items() if k not in ("tokens", "calls"))
+        return f"{stage}={data.get('tokens', 0)}tok/{data.get('calls', 0)}calls" + (f"[{extras}]" if extras else "")
+
+    token_breakdown = ", ".join(_stage_note(stage, data) for stage, data in token_usage.items())
+    if tripped := quota_tripped():
+        token_breakdown += f", quota_exhausted=true (model={tripped['model']})"
 
     row = {
         "vertical": vertical,

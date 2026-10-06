@@ -24,7 +24,14 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from common.db import get_client
-from common.groq_client import MODEL_FAST, generate, get_call_count, get_tokens_used, reset_tokens_used
+from common.groq_client import (
+    MODEL_FAST,
+    GroqQuotaExhausted,
+    generate,
+    get_call_count,
+    get_tokens_used,
+    reset_tokens_used,
+)
 from common.parsing import extract_json
 from common.regions import language_for_region
 from common.token_usage_log import record as record_tokens
@@ -379,6 +386,9 @@ def run(vertical: str) -> None:
                     vertical, "Manufacturing partner for {brand_name}?"
                 ).format(brand_name=lead["brand_name"])
                 notes_suffix = " AWAITING SPEC VERIFICATION."
+        except GroqQuotaExhausted as exc:
+            print(f"[copywriter] QUOTA EXHAUSTED at {lead['domain']}: {exc} — stopping, remaining leads stay pending")
+            break
         except Exception as exc:  # noqa: BLE001 — e.g. Groq rate limit; retry next run, don't
             # crash the whole job and skip every remaining lead plus the Sender/Summary steps.
             print(f"[copywriter] failed for {lead['domain']}: {exc}")

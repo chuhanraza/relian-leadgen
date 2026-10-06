@@ -26,6 +26,8 @@ from dotenv import load_dotenv
 from common.db import get_client
 from common.groq_client import (
     MODEL_FAST,
+    GroqQuotaExhausted,
+    GroqRateLimited,
     MODEL_QUALITY,
     generate,
     get_call_count,
@@ -188,8 +190,10 @@ def discover_names(vertical: str, region: str, pass_index: int = 0) -> list[str]
     try:
         raw = generate(prompt, max_tokens=700, model=MODEL_QUALITY)
         candidates = extract_json(raw)
-    except Exception as exc:  # noqa: BLE001 — e.g. Groq rate limit; one region's failure
-        # shouldn't crash the whole run and skip every remaining region plus later stages.
+    except (GroqQuotaExhausted, GroqRateLimited):
+        raise  # not "no candidates": the caller must NOT mark this region as searched
+    except Exception as exc:  # noqa: BLE001 — a malformed reply for one region shouldn't crash
+        # the whole run and skip every remaining region plus later stages.
         print(f"[lead_hunter] discovery failed for region={region!r}: {exc}")
         return []
     # The fast model occasionally replies with a JSON array of bare strings instead of
@@ -318,8 +322,10 @@ def verify_candidate(
     try:
         raw = generate(prompt, max_tokens=400, model=MODEL_FAST)
         data = extract_json(raw)
+    except GroqQuotaExhausted:
+        raise  # daily limit: stop the run; this is NOT a rejection of the candidate
     except Exception as exc:  # noqa: BLE001 — one candidate's failure shouldn't kill the run
-        print(f"[lead_hunter] verify failed for {brand_name!r}: {exc}")
+        print(f"[lead_hunter] verify failed for {brand_name!r} (llm_error, not a rejection): {exc}")
         _bump("llm_error")
         return None
 
@@ -348,7 +354,11 @@ def _process_region(
     print(f"[lead_hunter] --- region={region} (pass={pass_index}) ---")
     failures_before = get_ddg_failure_count()
 
-    names = discover_names(vertical, region, pass_index=pass_index)
+    try:
+        names = discover_names(vertical, region, pass_index=pass_index)
+    except GroqRateLimited as exc:
+        print(f"[lead_hunter] discovery rate-limited for region={region!r}, NOT marking it searched: {exc}")
+        return 0
     print(f"[lead_hunter] discovered {len(names)} candidate names: {names}")
 
     inserted_this_region = 0
@@ -411,6 +421,17 @@ def _count_today(db, vertical: str) -> int:
     return resp.count or 0
 
 
+def _usage_extras(quota_hit: bool) -> dict:
+    """Counts written to daily_run_log notes: a real rejection by the model is a different
+    thing from a call that errored, and quota_exhausted says the day's free tokens ran out.
+    """
+    return {
+        "quota_exhausted": bool(quota_hit),
+        "rejected_by_model": VERIFY_STATS.get("rejected_by_model", 0),
+        "llm_error": VERIFY_STATS.get("llm_error", 0),
+    }
+
+
 def _budget_hit() -> bool:
     """Either stage's per-run token budget is spent (discovery on 120B, verify on 20B)."""
     return (
@@ -441,14 +462,20 @@ def _run_fixed(vertical: str) -> dict:
 
     regions_processed: list[str] = []
     total_inserted = 0
+    quota_hit = False
 
     for region in regions:
         if _budget_hit():
             print(f"[lead_hunter] Groq token budget reached, stopping early (calls={get_call_count()})")
             break
-        inserted_this_region = _process_region(
-            db, vertical, region, existing_domains, pass_index=variant_index
-        )
+        try:
+            inserted_this_region = _process_region(
+                db, vertical, region, existing_domains, pass_index=variant_index
+            )
+        except GroqQuotaExhausted as exc:
+            quota_hit = True
+            print(f"[lead_hunter] QUOTA EXHAUSTED while on region={region!r}: {exc} — exiting cleanly, region left unmarked")
+            break
         total_inserted += inserted_this_region
         regions_processed.append(region)
 
@@ -467,9 +494,10 @@ def _run_fixed(vertical: str) -> dict:
         "ddg_failures": get_ddg_failure_count(),
         "groq_calls": get_call_count(),
         "groq_tokens_used": get_tokens_used(),
+        **_usage_extras(quota_hit),
     }
     # moto_apparel never recorded its lead_hunter usage before, so daily_run_log undercounted it.
-    record_tokens("lead_hunter", get_tokens_used(), get_call_count())
+    record_tokens("lead_hunter", get_tokens_used(), get_call_count(), **_usage_extras(quota_hit))
     print(f"[lead_hunter] verify_stats={VERIFY_STATS} ddg_retry_saves={get_ddg_retry_saves()}")
     print(f"[lead_hunter] run complete: {result}")
     return result
@@ -519,6 +547,7 @@ def _run_daily_target(vertical: str) -> dict:
     total_inserted = 0
     outcome = "target_met"
     passes_run = 0
+    quota_hit = False
 
     for pass_index in range(MAX_DAILY_PASSES):
         passes_run = pass_index + 1
@@ -544,9 +573,18 @@ def _run_daily_target(vertical: str) -> dict:
                 )
                 break
 
-            inserted_this_region = _process_region(
-                db, vertical, region, existing_domains, pass_index=pass_index
-            )
+            try:
+                inserted_this_region = _process_region(
+                    db, vertical, region, existing_domains, pass_index=pass_index
+                )
+            except GroqQuotaExhausted as exc:
+                quota_hit = True
+                groq_budget_hit = True
+                print(
+                    f"[lead_hunter] QUOTA EXHAUSTED while on region={region!r}: {exc} — exiting "
+                    f"cleanly, region left unmarked (total_inserted={total_inserted})"
+                )
+                break
             pass_inserted += inserted_this_region
             total_inserted += inserted_this_region
             if region not in regions_processed:
@@ -566,6 +604,10 @@ def _run_daily_target(vertical: str) -> dict:
                 f"(pass {passes_run}, total_inserted={total_inserted} >= remaining={remaining})"
             )
             outcome = "target_met"
+            break
+
+        if quota_hit:
+            outcome = "quota_exhausted"
             break
 
         if groq_budget_hit:
@@ -606,8 +648,9 @@ def _run_daily_target(vertical: str) -> dict:
         "ddg_failures": get_ddg_failure_count(),
         "groq_calls": get_call_count(),
         "groq_tokens_used": get_tokens_used(),
+        **_usage_extras(quota_hit),
     }
-    record_tokens("lead_hunter", get_tokens_used(), get_call_count())
+    record_tokens("lead_hunter", get_tokens_used(), get_call_count(), **_usage_extras(quota_hit))
     print(f"[lead_hunter] verify_stats={VERIFY_STATS} ddg_retry_saves={get_ddg_retry_saves()}")
     print(f"[lead_hunter] run complete: {result}")
     return result

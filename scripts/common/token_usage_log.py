@@ -17,9 +17,9 @@ import os
 _LOG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", ".groq_usage_run.json")
 
 
-def record(stage: str, tokens: int, calls: int) -> None:
+def record(stage: str, tokens: int, calls: int, **extra) -> None:
     data = _read()
-    data[stage] = {"tokens": tokens, "calls": calls}
+    data[stage] = {"tokens": tokens, "calls": calls, **extra}
     with open(_LOG_PATH, "w") as f:
         json.dump(data, f)
 

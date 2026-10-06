@@ -32,7 +32,15 @@ from common.contact_discovery import (
     reset_apollo_call_count,
 )
 from common.db import get_client
-from common.groq_client import MODEL_FAST, generate, get_call_count, get_tokens_used, reset_tokens_used
+from common.groq_client import (
+    MODEL_FAST,
+    GroqQuotaExhausted,
+    GroqRateLimited,
+    generate,
+    get_call_count,
+    get_tokens_used,
+    reset_tokens_used,
+)
 from common.lead_scoring import score_lead
 from common.token_budget import stage_budget
 from common.parsing import extract_json
@@ -92,6 +100,7 @@ def run(vertical: str) -> None:
     )
     print(f"[enricher] vertical={vertical} pending_this_batch={len(leads)} (cap={ENRICHER_BATCH_SIZE})")
 
+    quota_hit = False
     enricher_budget = stage_budget("enricher")  # on MODEL_FAST, this run's share of the free 20B quota
     for lead in leads:
         if get_tokens_used(MODEL_FAST) >= enricher_budget:
@@ -116,12 +125,28 @@ def run(vertical: str) -> None:
         try:
             raw = generate(prompt, max_tokens=2048, model=MODEL_FAST)
             data = extract_json(raw)
+        except GroqQuotaExhausted as exc:
+            # Daily limit: stop the run. The lead is left UNTOUCHED (research_notes stays NULL)
+            # so the next run picks it up again.
+            quota_hit = True
+            print(f"[enricher] QUOTA EXHAUSTED at {lead['domain']}: {exc} — stopping, lead left pending")
+            break
+        except GroqRateLimited as exc:
+            print(f"[enricher] per-minute rate limit persisted for {lead['domain']}, leaving pending: {exc}")
+            continue
         except Exception as first_exc:
             # Most failures here are token-cap truncation (probabilistic response length),
             # not a content problem, so a second sample is very likely to land under the cap.
             try:
                 raw = generate(prompt, max_tokens=2048, model=MODEL_FAST)
                 data = extract_json(raw)
+            except GroqQuotaExhausted as exc:
+                quota_hit = True
+                print(f"[enricher] QUOTA EXHAUSTED at {lead['domain']}: {exc} — stopping, lead left pending")
+                break
+            except GroqRateLimited as exc:
+                print(f"[enricher] per-minute rate limit persisted for {lead['domain']}, leaving pending: {exc}")
+                continue
             except Exception as second_exc:  # noqa: BLE001 — a single lead's research failure shouldn't kill the run
                 exc_text = f"{first_exc}; {second_exc}"
                 if "rate_limit_exceeded" in exc_text or " 429" in exc_text:
@@ -253,7 +278,7 @@ def run(vertical: str) -> None:
             print(f"[enricher] {lead['domain']}: email_found=False, waterfall found nothing")
 
     print(f"[enricher] run complete: groq_calls={get_call_count()}, groq_tokens_used={get_tokens_used()}")
-    record_tokens("enricher", get_tokens_used(), get_call_count())
+    record_tokens("enricher", get_tokens_used(), get_call_count(), quota_exhausted=quota_hit)
 
 
 if __name__ == "__main__":

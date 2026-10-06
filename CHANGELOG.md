@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-10-06d — quota errors are no longer rejections and no longer rotate regions
+
+- `groq_client`: 429s are classified. Per-minute (TPM/RPM): wait retry-after (cap 90s) and retry
+  once, then `GroqRateLimited`. Daily (TPD/RPD): `GroqQuotaExhausted` and a circuit breaker
+  (in-process + `.groq_quota_exhausted.json` so later stages of the same job skip model calls).
+- `lead_hunter`: quota errors propagate out of discovery/verify; the region in progress is NOT
+  upserted (last_searched_at untouched); the run exits cleanly. A per-minute failure is an
+  `llm_error`, never `rejected_by_model`. daily_run_log notes now carry
+  `[quota_exhausted=…, rejected_by_model=N, llm_error=M]`.
+- `enricher`: quota / per-minute failures leave `research_notes` NULL so the lead is retried.
+  `copywriter` stops at the breaker.
+- `healthcheck`: a daily-limit 429 is logged loudly and exits 0; credential errors still fail.
+- Before this, llm_error was only printed to the CI log (never stored), and every region touched
+  by a quota-starved run was stamped searched with 0 leads.
+
+
 ## 2026-10-06c — token budgets, trimmed verify prompts, moto query variants
 
 - Groq free tier is per ORGANIZATION per model: 200K tokens/day, 8K/min, 1K requests/day for

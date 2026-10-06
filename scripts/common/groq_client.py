@@ -5,12 +5,14 @@ Get a free key at https://console.groq.com/keys and set it as GROQ_API_KEY.
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import sys
 import time
 from collections import deque
 
-from groq import BadRequestError, Groq, NotFoundError
+from groq import BadRequestError, Groq, NotFoundError, RateLimitError
 
 MODEL_QUALITY = "openai/gpt-oss-120b"
 MODEL_FAST = "openai/gpt-oss-20b"
@@ -41,6 +43,85 @@ _REASONING_EFFORT = {
     "qwen/qwen3.6-27b": "none",
     "groq/compound-mini": None,
 }
+
+
+class GroqQuotaExhausted(RuntimeError):
+    """The free DAILY limit (tokens or requests per day) is spent. Not a rejection and not
+    retryable today: callers must stop making model calls, leave their work pending, and
+    NOT mark anything as processed.
+    """
+
+
+class GroqRateLimited(RuntimeError):
+    """A per-minute 429 that was still failing after the one wait-and-retry. Transient: the
+    item should be left pending, not treated as a model rejection.
+    """
+
+
+MAX_RETRY_AFTER_SECONDS = 90
+
+# The breaker is shared across the separate stage processes of one job (lead_hunter,
+# enricher, copywriter all run as their own `python scripts/X.py`) through a small flag file
+# in the job workspace, same pattern as token_usage_log. A flag older than the TTL is
+# ignored so a stale local file can never block a fresh day.
+_QUOTA_FLAG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", ".groq_quota_exhausted.json")
+QUOTA_FLAG_TTL_SECONDS = 3 * 3600
+_quota_tripped: dict | None = None
+
+
+def _classify_429(exc: RateLimitError) -> tuple[str, float]:
+    """('daily' | 'minute', seconds_to_wait). Groq's 429 text names the limit that tripped,
+    e.g. "... on tokens per day (TPD): Limit 200000, Used 199569 ..." vs "... per minute (TPM)".
+    """
+    body = exc.body if isinstance(exc.body, dict) else {}
+    msg = str((body.get("error") or {}).get("message") or exc)
+    kind = "daily" if re.search(r"per day|\(TPD\)|\(RPD\)", msg) else "minute"
+    wait = 10.0
+    retry_after = getattr(getattr(exc, "response", None), "headers", {}).get("retry-after")
+    try:
+        if retry_after:
+            wait = float(retry_after)
+        elif m := re.search(r"try again in (?:(\d+)m)?(?:([\d.]+)s)?", msg):
+            wait = int(m.group(1) or 0) * 60 + float(m.group(2) or 0)
+    except ValueError:
+        pass
+    return kind, min(wait, MAX_RETRY_AFTER_SECONDS)
+
+
+def quota_tripped() -> dict | None:
+    """The breaker state ({'model','message','at'}) if a daily limit has tripped this run
+    (in this process or an earlier stage of the same job), else None.
+    """
+    global _quota_tripped
+    if _quota_tripped:
+        return _quota_tripped
+    try:
+        with open(_QUOTA_FLAG_PATH) as f:
+            data = json.load(f)
+        if time.time() - data.get("at", 0) < QUOTA_FLAG_TTL_SECONDS:
+            _quota_tripped = data
+            return data
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _trip_quota(model: str, message: str) -> None:
+    global _quota_tripped
+    _quota_tripped = {"model": model, "message": message[:300], "at": time.time()}
+    print(f"[groq_client] !!! DAILY QUOTA EXHAUSTED on {model}: {message[:200]} — no further model calls this run")
+    try:
+        with open(_QUOTA_FLAG_PATH, "w") as f:
+            json.dump(_quota_tripped, f)
+    except OSError:
+        pass
+
+
+def reset_quota_breaker() -> None:
+    global _quota_tripped
+    _quota_tripped = None
+    if os.path.exists(_QUOTA_FLAG_PATH):
+        os.remove(_QUOTA_FLAG_PATH)
 
 
 def _create_completion(client: Groq, model: str, prompt: str, max_tokens: int):
@@ -132,16 +213,10 @@ def _log_fallback(original_model: str, fallback_model: str, error_code: str, err
         print(f"[groq_client] could not record fallback event to Supabase: {exc}", file=sys.stderr)
 
 
-def generate(prompt: str, max_tokens: int = 1024, model: str = MODEL_QUALITY) -> str:
-    global _call_count, _total_tokens_used
-    _call_count += 1
-    client = _client()
-    # Both default models are OpenAI gpt-oss reasoning models on Groq: they spend some of
-    # max_tokens on a hidden reasoning pass before the actual answer, so callers with
-    # tight budgets (~<100 tokens) must size for that overhead, not just the answer length.
-    _pace_for_tpm(model, len(prompt) // 3 + max_tokens)
+def _complete(client: Groq, model: str, prompt: str, max_tokens: int):
+    """One completion, with the dead-model fallback. Raises groq.RateLimitError untouched."""
     try:
-        completion = _create_completion(client, model, prompt, max_tokens)
+        return _create_completion(client, model, prompt, max_tokens)
     except (BadRequestError, NotFoundError) as exc:
         error = (exc.body or {}).get("error", {}) if isinstance(exc.body, dict) else {}
         code = error.get("code", "")
@@ -149,7 +224,35 @@ def generate(prompt: str, max_tokens: int = 1024, model: str = MODEL_QUALITY) ->
         if code not in _DEAD_MODEL_CODES or fallback_model is None:
             raise
         _log_fallback(model, fallback_model, code, error.get("message", str(exc)))
-        completion = _create_completion(client, fallback_model, prompt, max_tokens)
+        return _create_completion(client, fallback_model, prompt, max_tokens)
+
+
+def generate(prompt: str, max_tokens: int = 1024, model: str = MODEL_QUALITY) -> str:
+    global _call_count, _total_tokens_used
+    if tripped := quota_tripped():
+        raise GroqQuotaExhausted(f"circuit breaker open ({tripped['model']}: {tripped['message']})")
+    _call_count += 1
+    client = _client()
+    # Both default models are OpenAI gpt-oss reasoning models on Groq: they spend some of
+    # max_tokens on a hidden reasoning pass before the actual answer, so callers with
+    # tight budgets (~<100 tokens) must size for that overhead, not just the answer length.
+    _pace_for_tpm(model, len(prompt) // 3 + max_tokens)
+    try:
+        completion = _complete(client, model, prompt, max_tokens)
+    except RateLimitError as exc:
+        kind, wait = _classify_429(exc)
+        if kind == "daily":
+            _trip_quota(model, str(exc))
+            raise GroqQuotaExhausted(str(exc)) from exc
+        print(f"[groq_client] per-minute 429 on {model}, waiting {wait:.0f}s then retrying once")
+        time.sleep(wait)
+        try:
+            completion = _complete(client, model, prompt, max_tokens)
+        except RateLimitError as exc2:
+            if _classify_429(exc2)[0] == "daily":
+                _trip_quota(model, str(exc2))
+                raise GroqQuotaExhausted(str(exc2)) from exc2
+            raise GroqRateLimited(str(exc2)) from exc2
     if completion.usage is not None:
         _total_tokens_used += completion.usage.total_tokens
         _tokens_by_model[model] = _tokens_by_model.get(model, 0) + completion.usage.total_tokens
