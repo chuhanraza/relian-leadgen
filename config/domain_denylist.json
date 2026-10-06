@@ -1,0 +1,32 @@
+{
+  "_comment": "Deterministic pre-LLM reject list for lead_hunter.verify_candidate. Matching is on the normalized domain (scheme and leading www. stripped, lowercased). 'domains' are exact matches (a path like facebook.com/venumasia is matched whole); 'suffixes' match the domain itself or any subdomain. Domains below were looked up in leadgen.outreach_leads, not guessed.",
+  "domains": [
+    "vuoriclothing.com",
+    "venum.com",
+    "venum.com.br",
+    "venum-france.fr",
+    "venum.asia",
+    "venumasia.com",
+    "venumasia.shop",
+    "venumbrand.shop",
+    "venumfght.com",
+    "venumtrainingcamp.com",
+    "venum-turkey.com",
+    "facebook.com/venumasia",
+    "aerostich.com",
+    "motocard.com"
+  ],
+  "suffixes": [
+    "fourthwall.com",
+    "reamaze.com",
+    "zendesk.com",
+    "freshdesk.com",
+    "gorgias.io",
+    "gorgias.com",
+    "helpscout.com",
+    "helpscoutapp.com",
+    "freshservice.com",
+    "kayako.com",
+    "happyfox.com"
+  ]
+}

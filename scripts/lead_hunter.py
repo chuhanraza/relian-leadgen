@@ -15,8 +15,10 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import re
 import sys
+from pathlib import Path
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
@@ -24,7 +26,6 @@ from dotenv import load_dotenv
 from common.db import get_client
 from common.groq_client import (
     MODEL_FAST,
-    MODEL_QUALITY,
     generate,
     get_call_count,
     get_tokens_used,
@@ -39,6 +40,7 @@ from common.web_search import (
     fetch_page_text,
     format_results,
     get_ddg_failure_count,
+    get_ddg_retry_saves,
     reset_ddg_failure_count,
 )
 
@@ -114,9 +116,6 @@ key: brand_name. No other text. Empty array if nothing qualifies.
 """,
 }
 
-# Size filter ceiling: above this headcount a brand is not a boutique/mid-size prospect.
-MAX_EMPLOYEES = 200
-
 VERIFY_PROMPTS = {
     "moto_apparel": """Candidate: "{brand_name}" (a possible motorcycle apparel brand, region: {region})
 
@@ -133,57 +132,17 @@ Homepage text of the top likely match (may be empty if unfetchable):
    presence: set domain to "facebook.com/<pagename>" and website_url to the full Facebook
    URL. Only say none was found if neither an official site nor a matching Facebook Page
    turned up. Note: a Facebook Page's homepage text is never fetchable (login wall), so if
-   you accept one, base steps 2-3 on the search result snippets alone.
+   you accept one, base step 2 on the search result snippets alone.
 2. Using the homepage text if available, verify: is this a BRAND (designs/sells apparel
    under its own label) rather than a manufacturer/wholesale distributor/OEM factory? If
    the homepage text says they ARE the manufacturer/factory for other brands, this fails.
-3. Confirm this is an INDEPENDENT, BOUTIQUE-TO-MID-SIZE operation, not a
-   good private-label manufacturing prospect if it's actually one of
-   these: a globally recognized heritage or luxury brand, a brand owned
-   by or part of a large corporate/fashion group, or a brand with
-   mass-market distribution across major retail chains (e.g. brands at
-   the scale of Belstaff, Alpinestars, Dainese are TOO LARGE —
-   disqualify regardless of how steps 1-2 went). If you recognize the
-   name as large/well-established/conglomerate-owned from your own
-   knowledge, or the homepage text itself signals large scale (e.g.
-   investor-relations language, "since 18xx" heritage branding, dozens
-   of international retail locations), this fails.
-
-SIZE FILTER (applies on top of every step above; any one of these means qualifies=false):
- a. PUBLICLY TRADED, or a subsidiary/brand of a publicly traded company (stock ticker,
-    investor-relations pages, "NYSE"/"NASDAQ"/"LSE"/"ASX" listing, annual reports).
- b. MORE THAN ~200 EMPLOYEES (use your own knowledge of the company plus any "team of N",
-    careers-page, store-count or revenue signals in the text). Venture-backed
-    scale-ups, brands with dozens of stores, and global distribution networks are over this line.
- c. A MULTI-BRAND RETAILER, marketplace, or wholesale distributor that mainly sells OTHER
-    companies' brands (e.g. a motorcycle gear superstore or a catalogue/mail-order retailer
-    carrying many labels). A single-label brand or a gym/shop with its own small range is fine.
- d. OBSERVABLE SCALE SIGNALS — set the matching flag below to true if ANY is evident from
-    the text or your own knowledge (do not low-ball because the page doesn't say):
-      - sells_third_party_brands: the site carries other companies' labels (a "Shop by
-        brand"/"Brands" menu listing several brands, or a catalogue mixing own-label and
-        third-party products). A company that makes its own label BUT ALSO runs a retail
-        shop/catalogue carrying other companies' labels counts as true. Selling only its
-        own label is false.
-      - global_footprint: its own offices/subsidiaries/stores or national distributors in
-        3+ countries, OR it is an official apparel/equipment partner of a major league,
-        federation or promotion (e.g. UFC, MotoGP, FIFA, Olympic bodies), OR it has
-        elite-athlete sponsorship across multiple countries. Merely shipping worldwide
-        from one country does not count.
- If you are unsure whether a company is over these limits but it is a widely recognised
- international name, treat it as TOO LARGE and reject.
 
 Reply with ONLY a fenced ```json code block, a single object with exactly these keys:
-- qualifies: boolean (true only if you found their real official site, it's a brand not a
-  manufacturer/distributor, AND it passes the independent boutique/mid-size check in step 3)
+- qualifies: boolean (true only if you found their real official site AND it's a brand
+  not a manufacturer/distributor)
 - domain: bare domain (e.g. example.com) of their official site, or null
 - website_url: full URL, or null
-- one_line_reasoning: string (state explicitly if it failed step 3 or the size filter)
-- employee_estimate: integer best estimate of headcount, or null if unknown
-- publicly_traded: boolean (true if public or owned by a public company)
-- multi_brand_retailer: boolean
-- sells_third_party_brands: boolean
-- global_footprint: boolean
+- one_line_reasoning: string
 No other text.
 """,
     "combat_sports": """Candidate: "{brand_name}" (a possible combat-sports gym/shop/brand, region: {region})
@@ -201,52 +160,19 @@ Homepage text of the top likely match (may be empty if unfetchable):
    presence: set domain to "facebook.com/<pagename>" and website_url to the full Facebook
    URL. Only say none was found if neither an official site nor a matching Facebook Page
    turned up. Note: a Facebook Page's homepage text is never fetchable (login wall), so if
-   you accept one, base steps 2-4 on the search result snippets alone.
+   you accept one, base steps 2-3 on the search result snippets alone.
 2. Using the homepage text if available, confirm this is genuinely combat-sports related
    (boxing/MMA/Muay Thai/BJJ), not general fitness or a traditional non-combat dojo, and
    not based in Mainland China.
-3. Confirm this is NOT a large corporate-owned gym franchise/chain
-   (national or international), and NOT a big-box retail chain
-   masquerading as a "shop" — if so, disqualify regardless of category
-   fit, even if it otherwise looks like a good match.
-
-SIZE FILTER (applies on top of every step above; any one of these means qualifies=false):
- a. PUBLICLY TRADED, or a subsidiary/brand of a publicly traded company (stock ticker,
-    investor-relations pages, "NYSE"/"NASDAQ"/"LSE"/"ASX" listing, annual reports).
- b. MORE THAN ~200 EMPLOYEES (use your own knowledge of the company plus any "team of N",
-    careers-page, store-count or revenue signals in the text). Venture-backed
-    scale-ups, brands with dozens of stores, and global distribution networks are over this line.
- c. A MULTI-BRAND RETAILER, marketplace, or wholesale distributor that mainly sells OTHER
-    companies' brands (e.g. a motorcycle gear superstore or a catalogue/mail-order retailer
-    carrying many labels). A single-label brand or a gym/shop with its own small range is fine.
- d. OBSERVABLE SCALE SIGNALS — set the matching flag below to true if ANY is evident from
-    the text or your own knowledge (do not low-ball because the page doesn't say):
-      - sells_third_party_brands: the site carries other companies' labels (a "Shop by
-        brand"/"Brands" menu listing several brands, or a catalogue mixing own-label and
-        third-party products). A company that makes its own label BUT ALSO runs a retail
-        shop/catalogue carrying other companies' labels counts as true. Selling only its
-        own label is false.
-      - global_footprint: its own offices/subsidiaries/stores or national distributors in
-        3+ countries, OR it is an official apparel/equipment partner of a major league,
-        federation or promotion (e.g. UFC, MotoGP, FIFA, Olympic bodies), OR it has
-        elite-athlete sponsorship across multiple countries. Merely shipping worldwide
-        from one country does not count.
- If you are unsure whether a company is over these limits but it is a widely recognised
- international name, treat it as TOO LARGE and reject.
-4. Classify into exactly one sub_type: core_gym (a gym/academy), shop_distributor (a shop
+3. Classify into exactly one sub_type: core_gym (a gym/academy), shop_distributor (a shop
    or distributor), or small_brand (a small private gear brand).
 
 Reply with ONLY a fenced ```json code block, a single object with exactly these keys:
-- qualifies: boolean (false if step 3 fails, regardless of other steps)
+- qualifies: boolean
 - domain: bare domain (e.g. example.com), or null
 - website_url: full URL, or null
 - sub_type: one of "core_gym", "shop_distributor", "small_brand", or null
 - one_line_reasoning: string
-- employee_estimate: integer best estimate of headcount, or null if unknown
-- publicly_traded: boolean (true if public or owned by a public company)
-- multi_brand_retailer: boolean
-- sells_third_party_brands: boolean
-- global_footprint: boolean
 No other text.
 """,
 }
@@ -306,9 +232,88 @@ def _name_match_score(brand_name: str, url: str) -> int:
     return sum(1 for t in tokens if len(t) > 2 and t in domain)
 
 
-def verify_candidate(vertical: str, brand_name: str, region: str) -> dict | None:
+_DENYLIST_PATH = Path(__file__).resolve().parent.parent / "config" / "domain_denylist.json"
+# Per-run counters of why candidates were dropped, printed at the end of run().
+VERIFY_STATS: dict[str, int] = {}
+
+
+def _bump(reason: str) -> None:
+    VERIFY_STATS[reason] = VERIFY_STATS.get(reason, 0) + 1
+
+
+def _norm_domain(url_or_domain: str) -> str:
+    """'https://www.Venum.com/x?y' -> 'venum.com'. facebook.com keeps its first path
+    segment ('facebook.com/venumasia') since the page, not the host, identifies the lead.
+    """
+    d = re.sub(r"^https?://", "", (url_or_domain or "").strip().lower())
+    d = re.sub(r"^www\.", "", d.split("?")[0].split("#")[0]).rstrip("/")
+    host, _, path = d.partition("/")
+    if host == "facebook.com" and path:
+        return f"facebook.com/{path.split('/')[0]}"
+    return host
+
+
+def _load_denylist() -> tuple[set[str], tuple[str, ...]]:
+    try:
+        cfg = json.loads(_DENYLIST_PATH.read_text())
+    except Exception as exc:  # noqa: BLE001 — a missing file must not stop the pipeline
+        print(f"[lead_hunter] could not load {_DENYLIST_PATH}: {exc}")
+        return set(), ()
+    return {_norm_domain(d) for d in cfg.get("domains", [])}, tuple(cfg.get("suffixes", []))
+
+
+_DENY_DOMAINS, _DENY_SUFFIXES = _load_denylist()
+
+
+def is_denylisted(url_or_domain: str) -> bool:
+    d = _norm_domain(url_or_domain)
+    if d in _DENY_DOMAINS or any("/" not in x and d.endswith("." + x) for x in _DENY_DOMAINS):
+        return True
+    return any(d == suf or d.endswith("." + suf) for suf in _DENY_SUFFIXES)
+
+
+def _brand_is_denylisted(brand_name: str) -> str | None:
+    """Name-level check, before any search: the brand's normalized name is a prefix of (or
+    prefixed by) the second-level label of a denylisted domain, e.g. 'Vuori' vs
+    vuoriclothing.com, 'Venum Asia' vs venum.com. Returns the matching denylist domain.
+    """
+    norm = re.sub(r"[^a-z0-9]", "", brand_name.lower())
+    if len(norm) < 5:
+        return None
+    for d in _DENY_DOMAINS:
+        host = d.split("/")[0]
+        label = re.sub(r"[^a-z0-9]", "", host.split(".")[0])
+        if len(label) >= 5 and (norm.startswith(label) or label.startswith(norm)):
+            return d
+    return None
+
+
+def verify_candidate(
+    vertical: str, brand_name: str, region: str, existing_domains: set[str] | None = None
+) -> dict | None:
+    # --- deterministic checks first: zero tokens spent -----------------------------
+    if hit := _brand_is_denylisted(brand_name):
+        print(f"[lead_hunter] denylist name match for {brand_name!r} ~ {hit}, skipped (0 tokens, 0 searches)")
+        _bump("denylist")
+        return None
     results = ddg_search(f'"{brand_name}" official website', max_results=4)
+    if not results:
+        # Nothing to verify against (a DDG failure); the model would just be guessing from
+        # its own memory, so don't pay for the call.
+        _bump("no_search_results")
+        return None
     ranked = sorted(results, key=lambda r: _name_match_score(brand_name, r["url"]), reverse=True)
+    # Fail closed: any result that looks like this brand (name token in its URL) OR the
+    # top-ranked result being denylisted rejects the candidate.
+    related = [r for r in ranked if _name_match_score(brand_name, r["url"]) > 0] + ranked[:1]
+    if hit := next((r["url"] for r in related if is_denylisted(r["url"])), None):
+        print(f"[lead_hunter] denylist hit for {brand_name!r} -> {_norm_domain(hit)}, skipped (0 tokens)")
+        _bump("denylist")
+        return None
+    if existing_domains and _norm_domain(ranked[0]["url"]) in {_norm_domain(d) for d in existing_domains}:
+        _bump("already_known")
+        return None
+
     page_text = ""
     for r in ranked:
         if "facebook.com" in r["url"].lower():
@@ -323,29 +328,25 @@ def verify_candidate(vertical: str, brand_name: str, region: str) -> dict | None
         search_results=format_results(ranked),
         page_text=page_text or "(could not fetch a page)",
     )
+    # Single pass, MODEL_FAST only.
     try:
-        raw = generate(prompt, max_tokens=1024, model=MODEL_QUALITY)  # size filter needs real brand knowledge; 20b was unstable
+        raw = generate(prompt, max_tokens=512, model=MODEL_FAST)
         data = extract_json(raw)
     except Exception as exc:  # noqa: BLE001 — one candidate's failure shouldn't kill the run
         print(f"[lead_hunter] verify failed for {brand_name!r}: {exc}")
-        return None
-
-    # Code-level size gate: don't rely on the model setting qualifies=false itself.
-    emp = data.get("employee_estimate")
-    if (
-        data.get("publicly_traded") is True
-        or data.get("multi_brand_retailer") is True
-        or data.get("sells_third_party_brands") is True
-        or data.get("global_footprint") is True
-        or (isinstance(emp, (int, float)) and emp > MAX_EMPLOYEES)
-    ):
+        _bump("llm_error")
         return None
 
     domain = data.get("domain")
     # The model occasionally emits the literal string "null"/"none" instead of a real
     # JSON null when it means "no domain found" — treat those the same as missing.
     if not data.get("qualifies") or not domain or str(domain).strip().lower() in ("null", "none"):
+        _bump("rejected_by_model")
         return None
+    if is_denylisted(str(domain)):
+        _bump("denylist")
+        return None
+    _bump("accepted")
     return data
 
 
@@ -366,7 +367,7 @@ def _process_region(
 
     inserted_this_region = 0
     for brand_name in names:
-        verified = verify_candidate(vertical, brand_name, region)
+        verified = verify_candidate(vertical, brand_name, region, existing_domains)
         if not verified:
             continue
 
@@ -461,6 +462,7 @@ def _run_fixed(vertical: str) -> dict:
         "leads_inserted": total_inserted,
         "ddg_failures": get_ddg_failure_count(),
     }
+    print(f"[lead_hunter] verify_stats={VERIFY_STATS} ddg_retry_saves={get_ddg_retry_saves()}")
     print(f"[lead_hunter] run complete: {result}")
     return result
 
@@ -597,6 +599,7 @@ def _run_daily_target(vertical: str) -> dict:
         "groq_tokens_used": get_tokens_used(),
     }
     record_tokens("lead_hunter", get_tokens_used(), get_call_count())
+    print(f"[lead_hunter] verify_stats={VERIFY_STATS} ddg_retry_saves={get_ddg_retry_saves()}")
     print(f"[lead_hunter] run complete: {result}")
     return result
 

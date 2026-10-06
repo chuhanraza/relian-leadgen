@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-10-06b — simplify verify, denylist, DDG retry fix
+
+- `lead_hunter.py`: removed the LLM-judged size/public-company/employee rejection and the
+  120B second-opinion stage. Verify is single-pass MODEL_FAST. moto_apparel keeps only the
+  brand-vs-manufacturer rule; combat_sports no longer rejects gyms or multi-brand shops.
+- Kept: `config/domain_denylist.json` (checked by brand name, then by search-result domain,
+  before any LLM call), skip-on-no-search-results, skip-already-known-domain, helpdesk
+  reject and named-contact preference.
+- `web_search.py`: DDG failures were `ValueError: Unsupported protocol version 0x304` —
+  ddgs picks a random browser-impersonation profile per DDGS() and some profiles fail
+  instantly. Now up to 4 attempts, each with a fresh profile; "No results found" is an empty
+  result, not a failure.
+
+
 ## 2026-10-06 — reject helpdesk inboxes, named contacts first, tighter size filter
 
 412 drafts produced zero buyer replies; all 5 replies were helpdesk/auto-replies.

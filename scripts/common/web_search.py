@@ -29,30 +29,56 @@ def reset_ddg_failure_count() -> None:
     _ddg_failure_count = 0
 
 
-def _ddg_search_attempt(query: str, max_results: int):
-    try:
-        results = DDGS().text(query, max_results=max_results)
-    except Exception:  # noqa: BLE001 — caller decides whether to retry
-        return None
-    return [
-        {"title": r.get("title", ""), "url": r.get("href", ""), "snippet": r.get("body", "")}
-        for r in results
-    ]
+# ddgs picks a RANDOM browser-impersonation profile per DDGS() instance (secrets.choice in
+# ddgs/http_client.py). Some profiles raise `ValueError: Unsupported protocol version 0x304`
+# instantly (~25% of calls in a 2026-10-06 trace, no pattern by query or region). A fresh
+# DDGS() draws a new profile, so an immediate retry almost always succeeds — no sleep needed.
+DDG_MAX_ATTEMPTS = 4
+_TLS_PROFILE_ERROR = "Unsupported protocol version"
+
+_ddg_retry_saves = 0  # searches that failed at least once but succeeded on a retry
+
+
+def get_ddg_retry_saves() -> int:
+    return _ddg_retry_saves
+
+
+def _ddg_search_with_retries(query: str, max_results: int):
+    """Returns a list of results (possibly empty = genuinely no results), or None if every
+    attempt failed with a real error.
+    """
+    global _ddg_retry_saves
+    for attempt in range(DDG_MAX_ATTEMPTS):
+        try:
+            results = DDGS().text(query, max_results=max_results)
+        except Exception as exc:  # noqa: BLE001
+            msg = str(exc)
+            if "No results found" in msg:
+                return []  # a real empty answer, not a failure
+            if _TLS_PROFILE_ERROR in msg:
+                continue  # bad impersonation profile: retry immediately with a fresh one
+            if attempt < DDG_MAX_ATTEMPTS - 1:
+                time.sleep(DDG_RETRY_WAIT_SECONDS * (attempt + 1))  # rate-limit/timeout backoff
+            continue
+        if attempt:
+            _ddg_retry_saves += 1
+        return [
+            {"title": r.get("title", ""), "url": r.get("href", ""), "snippet": r.get("body", "")}
+            for r in results
+        ]
+    return None
 
 
 def ddg_search(query: str, max_results: int = 8) -> list[dict]:
-    """One retry after a 5s wait on failure, then a fixed 1.5s pacing delay before
-    returning either way — keeps us from bursting requests at DuckDuckGo as call volume
-    scales up, and surfaces persistent failures via the module-level counter instead of
-    silently returning an empty list indistinguishable from "no results found".
+    """Up to DDG_MAX_ATTEMPTS attempts (see _ddg_search_with_retries), then a fixed 1.5s
+    pacing delay before returning either way — keeps us from bursting requests at
+    DuckDuckGo as call volume scales up, and surfaces persistent failures via the
+    module-level counter instead of silently returning an empty list indistinguishable
+    from "no results found".
     """
     global _ddg_failure_count
 
-    result = _ddg_search_attempt(query, max_results)
-    if result is None:
-        time.sleep(DDG_RETRY_WAIT_SECONDS)
-        result = _ddg_search_attempt(query, max_results)
-
+    result = _ddg_search_with_retries(query, max_results)
     if result is None:
         _ddg_failure_count += 1
         result = []
