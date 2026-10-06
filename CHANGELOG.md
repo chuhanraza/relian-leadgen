@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-10-06c — token budgets, trimmed verify prompts, moto query variants
+
+- Groq free tier is per ORGANIZATION per model: 200K tokens/day, 8K/min, 1K requests/day for
+  both gpt-oss models. `x-ratelimit-limit-tokens` is the per-minute limit; the daily token
+  balance is not in any header.
+- `common/token_budget.py`: per-run budget per model = 200K * 90% / 4 runs = 45K, split by
+  stage. Discovery moved to gpt-oss-120b; verify + enricher stay on 20b. Replaces the flat
+  60,000 cap; hunter/enricher stop on their own stage budget.
+- `groq_client`: per-model token counters and per-minute pacing (85% of 8K TPM).
+- Verify prompt: top 3 results, 200-char snippets, 1,200-char page text, trimmed boilerplate.
+  Rokker: 1,931 -> 827 tokens, same outcome.
+- moto_apparel: 3 discovery query variants (rotated by day) and its lead_hunter token usage is
+  now recorded (it was never logged, so daily_run_log undercounted moto).
+
+
 ## 2026-10-06b — simplify verify, denylist, DDG retry fix
 
 - `lead_hunter.py`: removed the LLM-judged size/public-company/employee rejection and the

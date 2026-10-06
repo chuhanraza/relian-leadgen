@@ -3,8 +3,12 @@ Claude/Gemini, which both gate their free quotas behind a linked billing account
 Get a free key at https://console.groq.com/keys and set it as GROQ_API_KEY.
 """
 
+from __future__ import annotations
+
 import os
 import sys
+import time
+from collections import deque
 
 from groq import BadRequestError, Groq, NotFoundError
 
@@ -59,6 +63,30 @@ def _client() -> Groq:
 # run() invocation that wants to police its own usage.
 _call_count = 0
 _total_tokens_used = 0
+_tokens_by_model: dict[str, int] = {}
+
+# Free-tier limits (https://console.groq.com/docs/rate-limits, checked 2026-10-06), per
+# ORGANIZATION per model for both gpt-oss models: 8K tokens/min, 200K tokens/day, 1K
+# requests/day. The x-ratelimit-limit-tokens header is the PER-MINUTE number; the daily
+# token balance is not exposed in any response header.
+TPM_LIMIT = 8_000
+TPM_HEADROOM = 0.85  # pace to 85% of the per-minute limit
+_recent_calls: dict[str, deque] = {}  # model -> deque[(monotonic_ts, tokens)]
+
+
+def _pace_for_tpm(model: str, estimated_tokens: int) -> None:
+    """Sleep just long enough that this call can't push the last 60s of usage on this model
+    over the per-minute limit — a 429 on TPM wastes the call and, for verify, silently
+    turns a good candidate into a rejection.
+    """
+    dq = _recent_calls.setdefault(model, deque())
+    while True:
+        now = time.monotonic()
+        while dq and now - dq[0][0] >= 60:
+            dq.popleft()
+        if not dq or sum(t for _, t in dq) + estimated_tokens <= TPM_LIMIT * TPM_HEADROOM:
+            return
+        time.sleep(max(0.5, 60 - (now - dq[0][0]) + 0.25))
 
 
 def get_call_count() -> int:
@@ -70,13 +98,17 @@ def reset_call_count() -> None:
     _call_count = 0
 
 
-def get_tokens_used() -> int:
-    return _total_tokens_used
+def get_tokens_used(model: str | None = None) -> int:
+    """Total tokens this process has spent, or just those spent on `model`."""
+    if model is None:
+        return _total_tokens_used
+    return _tokens_by_model.get(model, 0)
 
 
 def reset_tokens_used() -> None:
     global _total_tokens_used
     _total_tokens_used = 0
+    _tokens_by_model.clear()
 
 
 def _log_fallback(original_model: str, fallback_model: str, error_code: str, error_message: str) -> None:
@@ -107,6 +139,7 @@ def generate(prompt: str, max_tokens: int = 1024, model: str = MODEL_QUALITY) ->
     # Both default models are OpenAI gpt-oss reasoning models on Groq: they spend some of
     # max_tokens on a hidden reasoning pass before the actual answer, so callers with
     # tight budgets (~<100 tokens) must size for that overhead, not just the answer length.
+    _pace_for_tpm(model, len(prompt) // 3 + max_tokens)
     try:
         completion = _create_completion(client, model, prompt, max_tokens)
     except (BadRequestError, NotFoundError) as exc:
@@ -119,4 +152,6 @@ def generate(prompt: str, max_tokens: int = 1024, model: str = MODEL_QUALITY) ->
         completion = _create_completion(client, fallback_model, prompt, max_tokens)
     if completion.usage is not None:
         _total_tokens_used += completion.usage.total_tokens
+        _tokens_by_model[model] = _tokens_by_model.get(model, 0) + completion.usage.total_tokens
+        _recent_calls.setdefault(model, deque()).append((time.monotonic(), completion.usage.total_tokens))
     return completion.choices[0].message.content or ""

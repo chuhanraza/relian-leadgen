@@ -5,6 +5,8 @@ Instead: search DuckDuckGo for candidates ourselves, hand the model the raw snip
 text, and let Groq (free, no card) synthesize a structured answer strictly from that.
 """
 
+from __future__ import annotations
+
 import re
 import time
 
@@ -87,11 +89,12 @@ def ddg_search(query: str, max_results: int = 8) -> list[dict]:
     return result
 
 
-def format_results(results: list[dict]) -> str:
+def format_results(results: list[dict], snippet_chars: int | None = None) -> str:
     if not results:
         return "(no search results found)"
-    return "\n\n".join(
-        f"- {r['title']}\n  URL: {r['url']}\n  Snippet: {r['snippet']}" for r in results
+    return "\n".join(
+        f"- {r['title'][:90]} | {r['url']} | {(r['snippet'][:snippet_chars] if snippet_chars else r['snippet'])}"
+        for r in results
     )
 
 

@@ -26,12 +26,14 @@ from dotenv import load_dotenv
 from common.db import get_client
 from common.groq_client import (
     MODEL_FAST,
+    MODEL_QUALITY,
     generate,
     get_call_count,
     get_tokens_used,
     reset_call_count,
     reset_tokens_used,
 )
+from common.token_budget import stage_budget
 from common.token_usage_log import record as record_tokens
 from common.parsing import extract_json
 from common.regions import REGIONS_BY_VERTICAL
@@ -56,21 +58,17 @@ QUALIFIED_TARGET_PER_RUN = 20
 DAILY_RAW_TARGET = 110
 MAX_DAILY_PASSES = 3
 
-# A single daily-target run can otherwise make up to 17 regions * (1 discovery + 10
-# verify) calls * 3 passes = ~560 Groq calls -- on the SAME dedicated key that
-# Enricher (<=40 calls/run) and Copywriter (<=80 calls/run) need right after this
-# script in the same GitHub Actions job. That imbalance is what was silently starving
-# Enricher of its whole day's token budget before it ever got a turn. Capping Lead
-# Hunter's own usage per run guarantees headroom stays for the rest of the pipeline,
-# both later in this same job and in this UTC day's remaining cron runs.
-#
-# A call-count cap doesn't bound real cost: each call's prompt embeds full search-result
-# text (up to 10 results in discover_names, 4 in verify_candidate), so real tokens/call
-# vary widely instead of being ~fixed. Capping actual tokens is what protects the shared
-# daily token budget; call count is kept only as an informational log field below.
-# 60,000 is a conservative starting estimate, not a measured number -- watch the logged
-# groq_tokens_used and retune once real data comes in.
-MAX_GROQ_TOKENS_PER_RUN = 60_000
+# Token caps are per stage and per model (common/token_budget.py): 90% of each model's free
+# 200K/day, split over the 4 daily runs, so the lead hunter can never starve the Enricher /
+# Copywriter that follow it in the same job, or the day's later runs. Discovery runs on
+# gpt-oss-120b, verify on gpt-oss-20b, so neither model's quota is exhausted by this stage.
+DISCOVER_TOKEN_BUDGET = stage_budget("discover")  # on MODEL_QUALITY
+VERIFY_TOKEN_BUDGET = stage_budget("verify")  # on MODEL_FAST
+
+# Verify prompt size controls (target <= ~1,000 tokens per verify call, prompt + reply).
+VERIFY_MAX_RESULTS = 3
+VERIFY_SNIPPET_CHARS = 200
+VERIFY_PAGE_CHARS = 1200
 
 DISCOVERY_QUERIES = {
     "moto_apparel": "boutique motorcycle technical apparel brand {region}",
@@ -81,7 +79,11 @@ DISCOVERY_QUERIES = {
 # phrasing instead of repeating the exact same search DuckDuckGo already answered —
 # pass 0 is the original phrasing so a single-pass run behaves identically to before.
 DISCOVERY_QUERY_VARIANTS = {
-    "moto_apparel": [DISCOVERY_QUERIES["moto_apparel"]],
+    "moto_apparel": [
+        DISCOVERY_QUERIES["moto_apparel"],
+        "independent motorcycle riding jacket pants gear label {region}",
+        "small batch motorcycle textile leather riding wear brand {region}",
+    ],
     "combat_sports": [
         "boxing MMA Muay Thai BJJ gym academy shop brand {region}",
         "independent boxing Muay Thai MMA BJJ gym or gear brand {region}",
@@ -117,63 +119,45 @@ key: brand_name. No other text. Empty array if nothing qualifies.
 }
 
 VERIFY_PROMPTS = {
-    "moto_apparel": """Candidate: "{brand_name}" (a possible motorcycle apparel brand, region: {region})
+    "moto_apparel": """Candidate: "{brand_name}" (possible motorcycle apparel brand, region: {region})
 
-Search results for their official site:
+Search results (title | url | snippet):
 {search_results}
 
-Homepage text of the top likely match (may be empty if unfetchable):
+Homepage text (may be empty):
 {page_text}
 
-1. Identify which result (if any) is their actual official website — not a marketplace,
-   review site, or unrelated company. If none of the results look like their real official
-   site, check whether one result is clearly this business's own Facebook Page (a business
-   Page, not a personal profile, group, or ad) — if so, that counts as their online
-   presence: set domain to "facebook.com/<pagename>" and website_url to the full Facebook
-   URL. Only say none was found if neither an official site nor a matching Facebook Page
-   turned up. Note: a Facebook Page's homepage text is never fetchable (login wall), so if
-   you accept one, base step 2 on the search result snippets alone.
-2. Using the homepage text if available, verify: is this a BRAND (designs/sells apparel
-   under its own label) rather than a manufacturer/wholesale distributor/OEM factory? If
-   the homepage text says they ARE the manufacturer/factory for other brands, this fails.
+1. Which result, if any, is their OFFICIAL website (not a marketplace, review site or
+   unrelated company)? If none, a result that is clearly their own business Facebook Page
+   counts: domain "facebook.com/<pagename>", website_url the full URL, and judge from
+   snippets alone. Otherwise no domain.
+2. Is it a BRAND selling apparel under its own label, rather than a manufacturer,
+   wholesale distributor or OEM factory for other brands?
 
-Reply with ONLY a fenced ```json code block, a single object with exactly these keys:
-- qualifies: boolean (true only if you found their real official site AND it's a brand
-  not a manufacturer/distributor)
-- domain: bare domain (e.g. example.com) of their official site, or null
-- website_url: full URL, or null
-- one_line_reasoning: string
-No other text.
+Reply ONLY with a fenced ```json block, one object with exactly these keys:
+qualifies (bool: official site/page found AND it is a brand), domain (bare domain or null),
+website_url (or null), one_line_reasoning (string).
 """,
-    "combat_sports": """Candidate: "{brand_name}" (a possible combat-sports gym/shop/brand, region: {region})
+    "combat_sports": """Candidate: "{brand_name}" (possible combat-sports gym/shop/brand, region: {region})
 
-Search results for their official site:
+Search results (title | url | snippet):
 {search_results}
 
-Homepage text of the top likely match (may be empty if unfetchable):
+Homepage text (may be empty):
 {page_text}
 
-1. Identify which result (if any) is their actual official website — not a marketplace,
-   review site, or unrelated company. If none of the results look like their real official
-   site, check whether one result is clearly this business's own Facebook Page (a business
-   Page, not a personal profile, group, or ad) — if so, that counts as their online
-   presence: set domain to "facebook.com/<pagename>" and website_url to the full Facebook
-   URL. Only say none was found if neither an official site nor a matching Facebook Page
-   turned up. Note: a Facebook Page's homepage text is never fetchable (login wall), so if
-   you accept one, base steps 2-3 on the search result snippets alone.
-2. Using the homepage text if available, confirm this is genuinely combat-sports related
-   (boxing/MMA/Muay Thai/BJJ), not general fitness or a traditional non-combat dojo, and
-   not based in Mainland China.
-3. Classify into exactly one sub_type: core_gym (a gym/academy), shop_distributor (a shop
-   or distributor), or small_brand (a small private gear brand).
+1. Which result, if any, is their OFFICIAL website (not a marketplace, review site or
+   unrelated company)? If none, a result that is clearly their own business Facebook Page
+   counts: domain "facebook.com/<pagename>", website_url the full URL, and judge from
+   snippets alone. Otherwise no domain.
+2. Is it genuinely combat-sports (boxing/MMA/Muay Thai/BJJ), not general fitness or a
+   traditional non-combat dojo, and not based in Mainland China?
+3. sub_type: core_gym (gym/academy), shop_distributor (shop or distributor) or small_brand
+   (small private gear brand).
 
-Reply with ONLY a fenced ```json code block, a single object with exactly these keys:
-- qualifies: boolean
-- domain: bare domain (e.g. example.com), or null
-- website_url: full URL, or null
-- sub_type: one of "core_gym", "shop_distributor", "small_brand", or null
-- one_line_reasoning: string
-No other text.
+Reply ONLY with a fenced ```json block, one object with exactly these keys:
+qualifies (bool), domain (bare domain or null), website_url (or null),
+sub_type ("core_gym"|"shop_distributor"|"small_brand"|null), one_line_reasoning (string).
 """,
 }
 
@@ -197,10 +181,12 @@ def pick_regions(db, vertical: str, n: int) -> list[str]:
 def discover_names(vertical: str, region: str, pass_index: int = 0) -> list[str]:
     variants = DISCOVERY_QUERY_VARIANTS[vertical]
     query = variants[pass_index % len(variants)].format(region=region)
-    results = ddg_search(query, max_results=10)
-    prompt = DISCOVERY_PROMPTS[vertical].format(region=region, search_results=format_results(results))
+    results = ddg_search(query, max_results=8)
+    prompt = DISCOVERY_PROMPTS[vertical].format(
+        region=region, search_results=format_results(results, 220)
+    )
     try:
-        raw = generate(prompt, max_tokens=1024, model=MODEL_FAST)
+        raw = generate(prompt, max_tokens=700, model=MODEL_QUALITY)
         candidates = extract_json(raw)
     except Exception as exc:  # noqa: BLE001 — e.g. Groq rate limit; one region's failure
         # shouldn't crash the whole run and skip every remaining region plus later stages.
@@ -296,7 +282,7 @@ def verify_candidate(
         print(f"[lead_hunter] denylist name match for {brand_name!r} ~ {hit}, skipped (0 tokens, 0 searches)")
         _bump("denylist")
         return None
-    results = ddg_search(f'"{brand_name}" official website', max_results=4)
+    results = ddg_search(f'"{brand_name}" official website', max_results=VERIFY_MAX_RESULTS)
     if not results:
         # Nothing to verify against (a DDG failure); the model would just be guessing from
         # its own memory, so don't pay for the call.
@@ -318,19 +304,19 @@ def verify_candidate(
     for r in ranked:
         if "facebook.com" in r["url"].lower():
             continue  # login wall — never fetch, the model relies on the snippet text instead
-        page_text = fetch_page_text(r["url"])
+        page_text = fetch_page_text(r["url"], max_chars=VERIFY_PAGE_CHARS)
         if page_text:
             break
 
     prompt = VERIFY_PROMPTS[vertical].format(
         brand_name=brand_name,
         region=region,
-        search_results=format_results(ranked),
+        search_results=format_results(ranked[:VERIFY_MAX_RESULTS], VERIFY_SNIPPET_CHARS),
         page_text=page_text or "(could not fetch a page)",
     )
     # Single pass, MODEL_FAST only.
     try:
-        raw = generate(prompt, max_tokens=512, model=MODEL_FAST)
+        raw = generate(prompt, max_tokens=400, model=MODEL_FAST)
         data = extract_json(raw)
     except Exception as exc:  # noqa: BLE001 — one candidate's failure shouldn't kill the run
         print(f"[lead_hunter] verify failed for {brand_name!r}: {exc}")
@@ -425,14 +411,27 @@ def _count_today(db, vertical: str) -> int:
     return resp.count or 0
 
 
+def _budget_hit() -> bool:
+    """Either stage's per-run token budget is spent (discovery on 120B, verify on 20B)."""
+    return (
+        get_tokens_used(MODEL_QUALITY) >= DISCOVER_TOKEN_BUDGET
+        or get_tokens_used(MODEL_FAST) >= VERIFY_TOKEN_BUDGET
+    )
+
+
 def _run_fixed(vertical: str) -> dict:
     """Original behavior, unchanged: up to MAX_REGIONS_PER_RUN regions, stop once
     QUALIFIED_TARGET_PER_RUN qualified leads are inserted this run. Still used by
     moto_apparel.
     """
     reset_ddg_failure_count()
+    reset_call_count()
+    reset_tokens_used()
     db = get_client()
     regions = pick_regions(db, vertical, MAX_REGIONS_PER_RUN)
+    # Rotate the discovery phrasing by day so repeat visits to a region don't re-ask DDG
+    # the exact same question.
+    variant_index = datetime.now(timezone.utc).toordinal() % len(DISCOVERY_QUERY_VARIANTS[vertical])
     print(f"[lead_hunter] vertical={vertical} regions={regions}")
 
     existing_domains = {
@@ -444,7 +443,12 @@ def _run_fixed(vertical: str) -> dict:
     total_inserted = 0
 
     for region in regions:
-        inserted_this_region = _process_region(db, vertical, region, existing_domains)
+        if _budget_hit():
+            print(f"[lead_hunter] Groq token budget reached, stopping early (calls={get_call_count()})")
+            break
+        inserted_this_region = _process_region(
+            db, vertical, region, existing_domains, pass_index=variant_index
+        )
         total_inserted += inserted_this_region
         regions_processed.append(region)
 
@@ -461,7 +465,11 @@ def _run_fixed(vertical: str) -> dict:
         "regions_processed": regions_processed,
         "leads_inserted": total_inserted,
         "ddg_failures": get_ddg_failure_count(),
+        "groq_calls": get_call_count(),
+        "groq_tokens_used": get_tokens_used(),
     }
+    # moto_apparel never recorded its lead_hunter usage before, so daily_run_log undercounted it.
+    record_tokens("lead_hunter", get_tokens_used(), get_call_count())
     print(f"[lead_hunter] verify_stats={VERIFY_STATS} ddg_retry_saves={get_ddg_retry_saves()}")
     print(f"[lead_hunter] run complete: {result}")
     return result
@@ -525,11 +533,12 @@ def _run_daily_target(vertical: str) -> dict:
         groq_budget_hit = False
 
         for region in ranked_regions:
-            if get_tokens_used() >= MAX_GROQ_TOKENS_PER_RUN:
+            if _budget_hit():
                 groq_budget_hit = True
                 print(
-                    f"[lead_hunter] Groq token budget reached ({get_tokens_used()} tokens, "
-                    f"cap={MAX_GROQ_TOKENS_PER_RUN}, calls={get_call_count()}) — stopping early "
+                    f"[lead_hunter] Groq token budget reached (discover={get_tokens_used(MODEL_QUALITY)}/"
+                    f"{DISCOVER_TOKEN_BUDGET}, verify={get_tokens_used(MODEL_FAST)}/{VERIFY_TOKEN_BUDGET}, "
+                    f"calls={get_call_count()}) — stopping early "
                     f"this run to leave headroom for Enricher/Copywriter later in this job and "
                     f"later runs today (total_inserted={total_inserted}, remaining={remaining})"
                 )

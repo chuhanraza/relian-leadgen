@@ -34,6 +34,7 @@ from common.contact_discovery import (
 from common.db import get_client
 from common.groq_client import MODEL_FAST, generate, get_call_count, get_tokens_used, reset_tokens_used
 from common.lead_scoring import score_lead
+from common.token_budget import stage_budget
 from common.parsing import extract_json
 from common.token_usage_log import record as record_tokens
 from common.web_search import ddg_search, fetch_page_html, format_results, html_to_text
@@ -91,7 +92,14 @@ def run(vertical: str) -> None:
     )
     print(f"[enricher] vertical={vertical} pending_this_batch={len(leads)} (cap={ENRICHER_BATCH_SIZE})")
 
+    enricher_budget = stage_budget("enricher")  # on MODEL_FAST, this run's share of the free 20B quota
     for lead in leads:
+        if get_tokens_used(MODEL_FAST) >= enricher_budget:
+            print(
+                f"[enricher] token budget reached ({get_tokens_used(MODEL_FAST)}/{enricher_budget} on 20B) — "
+                f"leaving the rest pending for the next run"
+            )
+            break
         website_url = lead.get("website_url") or f"https://{lead['domain']}"
         html = fetch_page_html(website_url)
         page_text = html_to_text(html, max_chars=4000) if html else "(could not fetch page)"
