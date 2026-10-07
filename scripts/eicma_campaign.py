@@ -13,6 +13,13 @@ A contact's wave follows its own cycle: cycle 0 -> wave_1, 1 -> wave_2, 2 -> wav
 wave_4 is the single FINAL reminder. It is never used by the regular run; it only runs when
 EICMA_FINAL_REMINDER=1 is set, goes to non-suppressed contacts that have not already had
 wave_4, still honours the 14-day gap, and is the one deliberate exception to MAX_CYCLES.
+Final-mode guards (all in is_eligible/select_batch, shared by the run and --report):
+  * suppressed contacts and contacts already sent wave_4 are skipped (also by email address,
+    so a duplicate row for the same address can't be mailed twice);
+  * helpdesk-style inboxes (support, service, customerservice, help, care, noreply, orders,
+    returns) are skipped;
+  * 14-day gap since last_sent_at and the 20/day batch cap still apply;
+  * no drafts on or after FINAL_CUTOFF (2026-11-02, UTC) in any mode.
 
 Same hard rule as the rest of this repo: only ever calls gmail drafts().create, never
 messages().send. Hamad reviews and bulk-sends drafts manually.
@@ -29,7 +36,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -50,6 +57,13 @@ MIN_DAYS_BETWEEN = 14
 REGULAR_WAVES = (1, 2, 3)
 FINAL_WAVE = 4
 FROM_EMAIL = "hm@relianmfg.com"
+# No drafts are created on or after this UTC date (the show starts Nov 3).
+FINAL_CUTOFF = date(2026, 11, 2)
+# Local parts of helpdesk-style inboxes that are never mailed (matched after dropping . _ - +
+# separators, and also against the first separator-delimited token, e.g. "support.eu").
+HELPDESK_LOCALS = frozenset(
+    {"support", "service", "customerservice", "help", "care", "noreply", "orders", "returns"}
+)
 
 # Waves whose template embeds a single approved banner inline via cid: (gmail_client's
 # inline_image_path/inline_image_cid — the same mechanism used for combat_sports'
@@ -105,9 +119,25 @@ def _parse_ts(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+def is_helpdesk_email(email: str | None) -> bool:
+    local = (email or "").strip().lower().split("@", 1)[0]
+    if not local:
+        return False
+    first_token = re.split(r"[._+\-]", local, maxsplit=1)[0]
+    return re.sub(r"[._+\-]", "", local) in HELPDESK_LOCALS or first_token in HELPDESK_LOCALS
+
+
+def past_cutoff(now: datetime) -> bool:
+    return now.astimezone(timezone.utc).date() >= FINAL_CUTOFF
+
+
 def is_eligible(contact: dict, now: datetime, final: bool = False) -> bool:
     """The hard limits. Single source of truth for both the run and --report."""
-    if contact.get("suppressed"):
+    if past_cutoff(now):
+        return False
+    if contact.get("suppressed") or not (contact.get("email") or "").strip():
+        return False
+    if final and is_helpdesk_email(contact.get("email")):
         return False
     last_sent = _parse_ts(contact.get("last_sent_at"))
     if last_sent and now - last_sent < timedelta(days=MIN_DAYS_BETWEEN):
@@ -123,6 +153,28 @@ def wave_for(contact: dict, final: bool) -> int:
     return REGULAR_WAVES[min(contact.get("cycle_number") or 0, len(REGULAR_WAVES) - 1)]
 
 
+def select_batch(contacts: list[dict], now: datetime, final: bool) -> tuple[list[dict], int]:
+    """Returns (batch of at most DAILY_BATCH_SIZE, total eligible). Oldest last_sent_at first.
+    In final mode an address that already has wave_4 on ANY row is excluded, and each address
+    appears at most once in the batch."""
+    already_final: set[str] = set()
+    if final:
+        already_final = {
+            (c.get("email") or "").strip().lower()
+            for c in contacts
+            if c.get("last_wave_design") == f"wave_{FINAL_WAVE}"
+        }
+    eligible, seen = [], set()
+    for c in contacts:
+        email = (c.get("email") or "").strip().lower()
+        if not is_eligible(c, now, final) or email in already_final or email in seen:
+            continue
+        seen.add(email)
+        eligible.append(c)
+    eligible.sort(key=lambda c: (c.get("last_sent_at") is not None, c.get("last_sent_at") or ""))
+    return eligible[:DAILY_BATCH_SIZE], len(eligible)
+
+
 def fetch_contacts(db) -> list[dict]:
     return db.table("eicma_invitations").select("*").limit(5000).execute().data
 
@@ -135,8 +187,12 @@ def report(contacts: list[dict], now: datetime) -> None:
     print(f"[eicma_campaign] non-suppressed at/over cap (cycle>={MAX_CYCLES}): {len(over_cap)}")
     print(f"[eicma_campaign] eligible for regular waves: "
           f"{sum(is_eligible(c, now) for c in contacts)}")
+    print(f"[eicma_campaign] non-suppressed helpdesk-style inboxes (skipped in final mode): "
+          f"{sum(is_helpdesk_email(c.get('email')) for c in active)}")
     print(f"[eicma_campaign] eligible for wave_{FINAL_WAVE} final reminder: "
-          f"{sum(is_eligible(c, now, final=True) for c in contacts)}")
+          f"{select_batch(contacts, now, True)[1]}")
+    if past_cutoff(now):
+        print(f"[eicma_campaign] past cutoff {FINAL_CUTOFF} — nothing is eligible")
 
 
 def run() -> None:
@@ -149,11 +205,13 @@ def run() -> None:
         report(all_contacts, now)
         return
 
-    eligible = [c for c in all_contacts if is_eligible(c, now, final)]
-    eligible.sort(key=lambda c: (c.get("last_sent_at") is not None, c.get("last_sent_at") or ""))
-    contacts = eligible[:DAILY_BATCH_SIZE]
+    if past_cutoff(now):
+        print(f"[eicma_campaign] on/after cutoff {FINAL_CUTOFF} — creating no drafts")
+        return
+
+    contacts, eligible_count = select_batch(all_contacts, now, final)
     print(f"[eicma_campaign] mode={'final' if final else 'regular'} "
-          f"eligible={len(eligible)} batch={len(contacts)}")
+          f"eligible={eligible_count} batch={len(contacts)}")
 
     templates: dict[int, tuple[str, str]] = {}
 

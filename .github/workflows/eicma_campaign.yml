@@ -2,15 +2,17 @@ name: EICMA invitation campaign
 
 on:
   workflow_dispatch: {}
-  # PAUSED 2026-10-06: campaign re-mailed the same contacts every ~12 days (cycle_number up to 11).
-  # Re-enable only after the hard caps in scripts/eicma_campaign.py are in place and reviewed.
-  # schedule:
-  #   - cron: "0 12 * * *"
+  # Re-enabled 2026-10-07 as a bounded final wave: wave_4 only (EICMA_FINAL_REMINDER), 20
+  # drafts/day, no drafts on/after 2026-11-02. Paused 2026-10-06 after the old loop re-mailed
+  # contacts; the hard caps in scripts/eicma_campaign.py now prevent that.
+  schedule:
+    - cron: "0 12 * * *"
 
 jobs:
   run-campaign:
     runs-on: ubuntu-latest
     env:
+      EICMA_FINAL_REMINDER: "1"
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
