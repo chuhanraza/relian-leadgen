@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 
-from common.db import get_client
+from common.db import fetch_all, get_client
 from common.groq_client import quota_tripped
 from common.token_usage_log import read_and_clear as read_and_clear_tokens
 
@@ -53,13 +53,12 @@ def run(vertical: str) -> None:
         .gte("created_at", today)
         .execute()
     )
-    regions = (
-        db.table("regions_covered")
+    regions = fetch_all(
+        lambda: db.table("regions_covered")
         .select("region, ddg_failures")
         .eq("vertical", vertical)
-        .gte("last_searched_at", today)
-        .execute()
-        .data
+        .gte("last_searched_at", today),
+        order_by="region",
     )
     ddg_failures_today = sum(r.get("ddg_failures") or 0 for r in regions)
 

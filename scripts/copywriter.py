@@ -51,7 +51,7 @@ SIGNATURE = "\n\nHamad, Relian MFG"
 # ---------- generic fallback: used by any vertical without a deterministic template ----------
 
 PROMPT_VERIFIED = """Write a short, specific cold outreach email pitching manufacturing
-partnership from Relian MFG (Sialkot, Pakistan) to {brand_name}.
+partnership from Relian MFG to {brand_name}.
 
 Reference this real, specific detail about them — do not write a generic template:
 "{research_notes}"
@@ -70,7 +70,7 @@ Rules:
 """
 
 PROMPT_UNVERIFIED = """Write a short, specific cold outreach email pitching manufacturing
-partnership from Relian MFG (Sialkot, Pakistan) to {brand_name}.
+partnership from Relian MFG to {brand_name}.
 
 Reference this real, specific detail about them — do not write a generic template:
 "{research_notes}"

@@ -28,7 +28,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from common.db import get_client
+from common.db import fetch_all, get_client
 from common.gmail_client import create_draft
 
 load_dotenv()
@@ -59,14 +59,12 @@ SKIP_INDIVIDUAL_ATTACHMENTS = {"moto_apparel", "combat_sports"}
 
 def run(vertical: str) -> None:
     db = get_client()
-    leads = (
-        db.table("outreach_leads")
+    leads = fetch_all(
+        lambda: db.table("outreach_leads")
         .select("*")
         .eq("vertical", vertical)
         .eq("status", "drafted")
         .is_("gmail_draft_id", "null")
-        .execute()
-        .data
     )
     print(f"[sender] vertical={vertical} pending={len(leads)}")
 

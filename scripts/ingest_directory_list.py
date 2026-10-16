@@ -23,7 +23,7 @@ import urllib.parse
 import requests
 from dotenv import load_dotenv
 
-from common.db import get_client
+from common.db import fetch_all, get_client, insert_lead_once
 
 load_dotenv()
 
@@ -68,7 +68,7 @@ def run(vertical: str, source: str) -> dict:
 
     existing_domains = {
         row["domain"]
-        for row in db.table("outreach_leads").select("domain").eq("vertical", vertical).execute().data
+        for row in fetch_all(lambda: db.table("outreach_leads").select("id, domain").eq("vertical", vertical))
     }
 
     inserted = skipped_duplicate = skipped_no_domain = 0
@@ -107,7 +107,9 @@ def run(vertical: str, source: str) -> dict:
             lead_row["contact_method"] = "email"
             lead_row["research_notes"] = f"Provided by directory ingestion ({source})."
 
-        db.table("outreach_leads").insert(lead_row).execute()
+        if not insert_lead_once(db, lead_row):
+            skipped_duplicate += 1
+            continue
         inserted += 1
         print(f"[ingest_directory_list] inserted {brand_name!r} -> {domain}")
 

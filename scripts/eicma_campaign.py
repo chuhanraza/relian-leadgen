@@ -41,7 +41,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from common.db import get_client
+from common.db import fetch_all, get_client
 from common.gmail_client import create_draft
 from common.groq_client import MODEL_FAST, generate
 
@@ -73,9 +73,9 @@ HELPDESK_LOCALS = frozenset(
 WAVE_INLINE_BANNERS = {
     2: (BRANDING_DIR / "eicma_wave2_banner.jpg", "eicma-wave2-banner"),
     3: (BRANDING_DIR / "eicma_wave3_banner.jpg", "eicma-wave3-banner"),
-    # wave_4 reuses the approved wave_3 banner file under its own cid.
-    4: (BRANDING_DIR / "eicma_wave3_banner.jpg", "eicma-wave4-banner"),
 }
+# wave_4 is plain text (wave_4.txt): no HTML part, no inline image, no button, no footer.
+PLAIN_TEXT_WAVES = frozenset({FINAL_WAVE})
 
 GREETING_PROMPT = """This is a messy CRM contact name field: "{contact_name}"
 It may contain a person's name, a company name, both, or neither cleanly.
@@ -84,6 +84,29 @@ business email opener — a first name if one is clearly present, otherwise
 a short/clean version of the company name (max 3 words), otherwise the
 word "there" if nothing usable exists. Reply with ONLY that word/phrase,
 nothing else."""
+
+
+FIRST_NAME_PROMPT = """This is a messy CRM contact name field: "{contact_name}"
+If it clearly contains a real person's FIRST NAME, reply with ONLY that first name.
+If it is only a company/brand name, a role, an email address, or anything unclear, reply
+with exactly: there"""
+
+
+def extract_first_name(contact_name: str) -> str:
+    """Greeting for plain-text waves: a real first name, otherwise "there" (never a company
+    name). Uses the same Groq extraction path as extract_greeting; the answer is also
+    sanity-checked so a model slip can't put junk in a personal email."""
+    if not contact_name.strip():
+        return "there"
+    try:
+        text = generate(FIRST_NAME_PROMPT.format(contact_name=contact_name),
+                        max_tokens=50, model=MODEL_FAST).strip().strip('"').rstrip(".")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[eicma_campaign] first-name extraction failed for {contact_name!r}: {exc}")
+        return "there"
+    if re.fullmatch(r"[^\W\d_]+(?:[-'][^\W\d_]+)?", text) and text.lower() != "there":
+        return text[:1].upper() + text[1:]
+    return "there"
 
 
 def extract_greeting(contact_name: str) -> str:
@@ -101,9 +124,11 @@ def extract_greeting(contact_name: str) -> str:
 
 
 def load_wave(wave_number: int) -> tuple[str, str]:
-    """Returns (html, subject) for an exact wave. No fallback — a missing wave is an error,
-    not a reason to silently mail a different design."""
-    html_path = WAVES_DIR / f"wave_{wave_number}.html"
+    """Returns (body template, subject) for an exact wave (.txt for plain-text waves, else
+    .html). No fallback — a missing wave is an error, not a reason to silently mail a
+    different design."""
+    ext = "txt" if wave_number in PLAIN_TEXT_WAVES else "html"
+    html_path = WAVES_DIR / f"wave_{wave_number}.{ext}"
     json_path = WAVES_DIR / f"wave_{wave_number}.json"
     if not (html_path.exists() and json_path.exists()):
         raise SystemExit(f"[eicma_campaign] wave_{wave_number} template missing in {WAVES_DIR}")
@@ -176,7 +201,7 @@ def select_batch(contacts: list[dict], now: datetime, final: bool) -> tuple[list
 
 
 def fetch_contacts(db) -> list[dict]:
-    return db.table("eicma_invitations").select("*").limit(5000).execute().data
+    return fetch_all(lambda: db.table("eicma_invitations").select("*"))
 
 
 def report(contacts: list[dict], now: datetime) -> None:
@@ -222,7 +247,8 @@ def run() -> None:
         html_template, subject = templates[wave]
         inline_banner_path, inline_banner_cid = WAVE_INLINE_BANNERS.get(wave, (None, None))
 
-        greeting = extract_greeting(contact["contact_name"] or "")
+        plain = wave in PLAIN_TEXT_WAVES
+        greeting = (extract_first_name if plain else extract_greeting)(contact["contact_name"] or "")
         rendered_html = html_template.replace("{{GREETING}}", greeting)
 
         try:
@@ -231,7 +257,7 @@ def run() -> None:
                 subject=subject,
                 body=rendered_html,
                 from_email=FROM_EMAIL,
-                is_html=True,
+                is_html=not plain,
                 inline_image_path=inline_banner_path,
                 inline_image_cid=inline_banner_cid or "banner-image",
             )

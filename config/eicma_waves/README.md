@@ -8,6 +8,7 @@ subject/design every time it completes a full pass over the non-suppressed conta
   substitutes this with the per-contact extracted greeting before creating the Gmail draft.
   Image `src` values must be absolute URLs (e.g. `raw.githubusercontent.com/...`) since Gmail
   won't inline local file paths.
+- `wave_4.txt` — plain-text final reminder (no HTML part, no image); `{{GREETING}}` = first name or "there".
 - `wave_N.json` — `{"subject": "..."}` for that wave.
 
 ## Rotation (changed 2026-10-06)

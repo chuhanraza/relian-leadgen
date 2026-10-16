@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 
-from common.db import get_client
+from common.db import fetch_all, get_client, insert_lead_once
 from common.groq_client import (
     MODEL_FAST,
     GroqQuotaExhausted,
@@ -171,7 +171,7 @@ def pick_regions(db, vertical: str, n: int) -> list[str]:
     within the same run even though several get processed sequentially.
     """
     regions = REGIONS_BY_VERTICAL[vertical]
-    rows = db.table("regions_covered").select("*").eq("vertical", vertical).execute().data
+    rows = fetch_all(lambda: db.table("regions_covered").select("*").eq("vertical", vertical), order_by="region")
     covered = {row["region"]: row for row in rows}
 
     uncovered = [r for r in regions if r not in covered]
@@ -385,7 +385,9 @@ def _process_region(
             if sub_type in ("core_gym", "shop_distributor", "small_brand"):
                 row["sub_type"] = sub_type
 
-        db.table("outreach_leads").insert(row).execute()
+        if not insert_lead_once(db, row):
+            print(f"[lead_hunter] {domain} already exists for {vertical} — skipped")
+            continue
         inserted_this_region += 1
         print(f"[lead_hunter] verified + inserted {brand_name!r} -> {domain}")
 
@@ -403,6 +405,13 @@ def _process_region(
 
     print(f"[lead_hunter] region={region} inserted={inserted_this_region}")
     return inserted_this_region
+
+
+def _existing_domains(db, vertical: str) -> set[str]:
+    return {
+        row["domain"]
+        for row in fetch_all(lambda: db.table("outreach_leads").select("id, domain").eq("vertical", vertical))
+    }
 
 
 def _today_start_utc_iso() -> str:
@@ -455,10 +464,7 @@ def _run_fixed(vertical: str) -> dict:
     variant_index = datetime.now(timezone.utc).toordinal() % len(DISCOVERY_QUERY_VARIANTS[vertical])
     print(f"[lead_hunter] vertical={vertical} regions={regions}")
 
-    existing_domains = {
-        row["domain"]
-        for row in db.table("outreach_leads").select("domain").eq("vertical", vertical).execute().data
-    }
+    existing_domains = _existing_domains(db, vertical)
 
     regions_processed: list[str] = []
     total_inserted = 0
@@ -538,10 +544,7 @@ def _run_daily_target(vertical: str) -> dict:
         }
 
     regions = REGIONS_BY_VERTICAL[vertical]
-    existing_domains = {
-        row["domain"]
-        for row in db.table("outreach_leads").select("domain").eq("vertical", vertical).execute().data
-    }
+    existing_domains = _existing_domains(db, vertical)
 
     regions_processed: list[str] = []
     total_inserted = 0
