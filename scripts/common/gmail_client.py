@@ -61,6 +61,7 @@ def create_draft(
     is_html: bool = False,
     inline_image_path: Path | None = None,
     inline_image_cid: str = "banner-image",
+    plain_alt: str | None = None,
 ) -> str:
     """Creates a Gmail draft (status: draft, never sent). Returns the draft id.
 
@@ -111,7 +112,14 @@ def create_draft(
                 'style="max-width:600px;width:100%;height:auto;margin-top:16px;">'
             )
         related = MIMEMultipart("related")
-        related.attach(MIMEText(html_body, "html"))
+        if plain_alt:
+            # text/plain alternative alongside the HTML: related(alternative(plain, html), image)
+            alt_part = MIMEMultipart("alternative")
+            alt_part.attach(MIMEText(plain_alt, "plain"))
+            alt_part.attach(MIMEText(html_body, "html"))
+            related.attach(alt_part)
+        else:
+            related.attach(MIMEText(html_body, "html"))
         image_part = MIMEImage(inline_data)
         image_part.add_header("Content-ID", f"<{inline_image_cid}>")
         image_part.add_header(

@@ -73,9 +73,50 @@ HELPDESK_LOCALS = frozenset(
 WAVE_INLINE_BANNERS = {
     2: (BRANDING_DIR / "eicma_wave2_banner.jpg", "eicma-wave2-banner"),
     3: (BRANDING_DIR / "eicma_wave3_banner.jpg", "eicma-wave3-banner"),
+    4: (BRANDING_DIR / "eicma_wave5_banner.jpg", "eicma-wave4-banner"),
 }
-# wave_4 is plain text (wave_4.txt): no HTML part, no inline image, no button, no footer.
-PLAIN_TEXT_WAVES = frozenset({FINAL_WAVE})
+# wave_4 is a minimal personal-looking email: wave_4.html (one inline banner, no button, no
+# footer) with wave_4.txt as the text/plain alternative. It greets by first name only.
+PLAIN_TEXT_WAVES: frozenset = frozenset()
+FIRST_NAME_WAVES = frozenset({FINAL_WAVE})
+# Domains never used to derive a brand name for the subject.
+_GENERIC_DOMAINS = frozenset({"gmail", "yahoo", "hotmail", "outlook", "icloud", "live", "aol",
+                              "gmx", "web", "libero", "virgilio", "tiscali", "mail", "msn"})
+
+
+def brand_from_email(email: str) -> str | None:
+    """Clean brand name from the email domain for the subject line, or None when it would
+    look sloppy (freemail, digits, long run-together words, more than 3 words)."""
+    try:
+        host = email.rsplit("@", 1)[1].lower().strip()
+    except IndexError:
+        return None
+    labels = host.split(".")
+    if len(labels) < 2:
+        return None
+    # skip second-level suffixes like co.uk / com.au
+    idx = -3 if len(labels) >= 3 and labels[-2] in {"co", "com", "org", "net"} else -2
+    label = labels[idx]
+    if label in _GENERIC_DOMAINS:
+        return None
+    tokens = label.split("-")
+    if not 1 <= len(tokens) <= 3 or not all(t.isalpha() and t.isascii() for t in tokens):
+        return None
+    if len(tokens) == 1 and not 3 <= len(label) <= 14:
+        return None
+    if any(len(t) < 2 for t in tokens):
+        return None
+    return " ".join(t.capitalize() for t in tokens)
+
+
+def build_subject(wave: int, email: str, subjects: dict) -> str:
+    """Subject for a contact: '{Brand} — meet at EICMA?' when a clean brand exists."""
+    tmpl = subjects.get("subject_with_brand")
+    if tmpl:
+        brand = brand_from_email(email)
+        if brand:
+            return tmpl.replace("{brand}", brand)
+    return subjects["subject"]
 
 GREETING_PROMPT = """This is a messy CRM contact name field: "{contact_name}"
 It may contain a person's name, a company name, both, or neither cleanly.
@@ -134,6 +175,17 @@ def load_wave(wave_number: int) -> tuple[str, str]:
         raise SystemExit(f"[eicma_campaign] wave_{wave_number} template missing in {WAVES_DIR}")
     subject = json.loads(json_path.read_text(encoding="utf-8"))["subject"]
     return html_path.read_text(encoding="utf-8"), subject
+
+
+def load_wave_meta(wave_number: int) -> dict:
+    """The wave's raw JSON (subject plus optional subject_with_brand)."""
+    return json.loads((WAVES_DIR / f"wave_{wave_number}.json").read_text(encoding="utf-8"))
+
+
+def load_plain_alt(wave_number: int) -> str | None:
+    """text/plain alternative for HTML waves that ship a matching .txt (wave_4)."""
+    path = WAVES_DIR / f"wave_{wave_number}.txt"
+    return path.read_text(encoding="utf-8") if path.exists() and wave_number not in PLAIN_TEXT_WAVES else None
 
 
 def _parse_ts(value: str | None) -> datetime | None:
@@ -244,12 +296,16 @@ def run() -> None:
         wave = wave_for(contact, final)
         if wave not in templates:
             templates[wave] = load_wave(wave)
-        html_template, subject = templates[wave]
+        html_template, _default_subject = templates[wave]
         inline_banner_path, inline_banner_cid = WAVE_INLINE_BANNERS.get(wave, (None, None))
 
         plain = wave in PLAIN_TEXT_WAVES
-        greeting = (extract_first_name if plain else extract_greeting)(contact["contact_name"] or "")
+        use_first_name = plain or wave in FIRST_NAME_WAVES
+        greeting = (extract_first_name if use_first_name else extract_greeting)(contact["contact_name"] or "")
         rendered_html = html_template.replace("{{GREETING}}", greeting)
+        alt = load_plain_alt(wave)
+        plain_alt = alt.replace("{{GREETING}}", greeting) if alt else None
+        subject = build_subject(wave, contact["email"], load_wave_meta(wave))
 
         try:
             draft_id = create_draft(
@@ -260,6 +316,7 @@ def run() -> None:
                 is_html=not plain,
                 inline_image_path=inline_banner_path,
                 inline_image_cid=inline_banner_cid or "banner-image",
+                plain_alt=plain_alt,
             )
         except Exception as exc:  # noqa: BLE001 — one failed draft shouldn't block the rest
             print(f"[eicma_campaign] failed for {contact['email']}: {exc}")

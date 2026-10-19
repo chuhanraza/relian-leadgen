@@ -81,12 +81,34 @@ class Guards(unittest.TestCase):
 
 
 class Wave4(unittest.TestCase):
-    def test_subject_body(self):
+    def test_template_and_subject(self):
         body, subject = ec.load_wave(4)
-        self.assertEqual(subject, "5 minutes at EICMA (Hall 14)")
+        self.assertEqual(subject, "meet at EICMA?")
         self.assertIn("{{GREETING}}", body)
-        self.assertNotIn("<", body)
-        self.assertNotIn("Sialkot", body)
+        self.assertIn("cid:eicma-wave4-banner", body)
+        self.assertIn("Hall 14", body)
+        self.assertNotIn("sialkot", body.lower())
+        self.assertNotIn("pakistan", body.lower())
+        self.assertIn("{{GREETING}}", ec.load_plain_alt(4))
+
+    def test_brand_names(self):
+        cases = {"a@motorrad-schmidt.it": "Motorrad Schmidt", "a@gmail.com": None,
+                 "a@riders.co.uk": "Riders", "a@bikerstore24.com": None,
+                 "a@motoshopmilanoroma.it": None, "a@a-b-c-d.it": None,
+                 "a@moto.it": "Moto", "bad": None, "a@x.it": None}
+        for email, want in cases.items():
+            self.assertEqual(ec.brand_from_email(email), want, email)
+
+    def test_subject_builder(self):
+        meta = ec.load_wave_meta(4)
+        self.assertEqual(ec.build_subject(4, "a@ducati.it", meta), "Ducati — meet at EICMA?")
+        self.assertEqual(ec.build_subject(4, "a@gmail.com", meta), "meet at EICMA?")
+
+    def test_banner_registered_and_small(self):
+        path, cid = ec.WAVE_INLINE_BANNERS[4]
+        self.assertEqual(cid, "eicma-wave4-banner")
+        self.assertTrue(path.exists())
+        self.assertLess(path.stat().st_size, 200_000)
 
     def test_greeting(self):
         with mock.patch.object(ec, "generate", return_value="Marco"):
@@ -98,16 +120,35 @@ class Wave4(unittest.TestCase):
         with mock.patch.object(ec, "generate", side_effect=RuntimeError):
             self.assertEqual(ec.extract_first_name("Marco"), "there")
 
-    def test_mime_plain_only(self):
+    def _draft(self, **kw):
         captured = {}
         svc = mock.MagicMock()
         svc.users().drafts().create.side_effect = lambda userId, body: captured.update(b=body) or mock.Mock(execute=lambda: {"id": "d"})
         with mock.patch.object(gmail_client, "build", return_value=svc), mock.patch.object(gmail_client, "_credentials"):
-            gmail_client.create_draft("a@b.com", "s", "Hi there,\n\nbody", from_email="hm@relianmfg.com", is_html=False)
+            gmail_client.create_draft("a@b.com", "s", from_email="hm@relianmfg.com", **kw)
         import email
-        msg = email.message_from_bytes(base64.urlsafe_b64decode(captured["b"]["message"]["raw"]))
-        types = [p.get_content_type() for p in msg.walk() if not p.is_multipart()]
-        self.assertEqual(types, ["text/plain"])
+        return email.message_from_bytes(base64.urlsafe_b64decode(captured["b"]["message"]["raw"]))
+
+    def test_mime_plain_only(self):
+        msg = self._draft(body="Hi there,\n\nbody", is_html=False)
+        self.assertEqual([p.get_content_type() for p in msg.walk() if not p.is_multipart()], ["text/plain"])
+
+    def test_mime_wave4(self):
+        html_t, _ = ec.load_wave(4)
+        path, cid = ec.WAVE_INLINE_BANNERS[4]
+        msg = self._draft(body=html_t.replace("{{GREETING}}", "Marco"), is_html=True,
+                          inline_image_path=path, inline_image_cid=cid,
+                          plain_alt=ec.load_plain_alt(4).replace("{{GREETING}}", "Marco"))
+        leaves = [p for p in msg.walk() if not p.is_multipart()]
+        self.assertEqual(sorted(p.get_content_type() for p in leaves), ["image/jpeg", "text/html", "text/plain"])
+        self.assertIn("multipart/related", [p.get_content_type() for p in msg.walk()])
+        img = [p for p in leaves if p.get_content_type() == "image/jpeg"]
+        self.assertEqual(len(img), 1)
+        self.assertEqual(img[0]["Content-ID"], "<eicma-wave4-banner>")
+        htm = [p for p in leaves if p.get_content_type() == "text/html"][0].get_payload(decode=True).decode()
+        self.assertIn("cid:eicma-wave4-banner", htm)
+        self.assertNotIn("sialkot", htm.lower())
+        self.assertIn("Hi Marco,", [p for p in leaves if p.get_content_type() == "text/plain"][0].get_payload(decode=True).decode())
 
 
 class NoSialkot(unittest.TestCase):
