@@ -6,13 +6,15 @@ on:
   # drafts/day, no drafts on/after 2026-11-09. Paused 2026-10-06 after the old loop re-mailed
   # contacts; the hard caps in scripts/eicma_campaign.py now prevent that.
   schedule:
-    - cron: "0 12 * * *"
+    - cron: "0 4 * * *"   # 09:00 Karachi, 18 drafts
+    - cron: "0 12 * * *"  # 17:00 Karachi, 20 drafts
 
 jobs:
   run-campaign:
     runs-on: ubuntu-latest
     env:
       EICMA_FINAL_REMINDER: "1"
+      EICMA_BATCH_SIZE: ${{ github.event.schedule == '0 4 * * *' && '18' || '20' }}
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

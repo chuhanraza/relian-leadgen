@@ -51,7 +51,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 WAVES_DIR = BASE_DIR / "config" / "eicma_waves"
 BRANDING_DIR = BASE_DIR / "assets" / "branding"
 
-DAILY_BATCH_SIZE = 20
+DAILY_BATCH_SIZE = int(os.environ.get("EICMA_BATCH_SIZE") or 20)  # 18 morning + 20 evening runs
 MAX_CYCLES = 3
 MIN_DAYS_BETWEEN = 14
 REGULAR_WAVES = (1, 2, 3)
