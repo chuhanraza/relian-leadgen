@@ -329,8 +329,9 @@ def run() -> None:
             if brand:
                 greeting = f"Team {brand}"
         rendered_html = html_template.replace("{{GREETING}}", greeting)
-        alt = load_plain_alt(wave)
-        plain_alt = alt.replace("{{GREETING}}", greeting) if alt else None
+        # Flat multipart/related (html + inline image), the structure the older banner waves use.
+        # A nested text/plain alternative made Gmail drop the image when the draft was sent.
+        plain_alt = None
         subject = build_subject(wave, contact["email"], load_wave_meta(wave))
 
         try:
