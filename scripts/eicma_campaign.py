@@ -10,11 +10,11 @@ Sends (drafts) up to DAILY_BATCH_SIZE invitations per run. Hard limits, enforced
     contacts up to 11 times).
 A contact's wave follows its own cycle: cycle 0 -> wave_1, 1 -> wave_2, 2 -> wave_3.
 
-wave_4 is the single FINAL reminder. It is never used by the regular run; it only runs when
+wave_5 is the single FINAL reminder. It is never used by the regular run; it only runs when
 EICMA_FINAL_REMINDER=1 is set, goes to non-suppressed contacts that have not already had
-wave_4, still honours the 14-day gap, and is the one deliberate exception to MAX_CYCLES.
+wave_5, still honours the 7-day gap, and is the one deliberate exception to MAX_CYCLES.
 Final-mode guards (all in is_eligible/select_batch, shared by the run and --report):
-  * suppressed contacts and contacts already sent wave_4 are skipped (also by email address,
+  * suppressed contacts and contacts already sent wave_5 are skipped (also by email address,
     so a duplicate row for the same address can't be mailed twice);
   * helpdesk-style inboxes (support, service, customerservice, help, care, noreply, orders,
     returns) are skipped;
@@ -27,7 +27,7 @@ messages().send. Hamad reviews and bulk-sends drafts manually.
 Usage:
   python scripts/eicma_campaign.py            # regular run (waves 1-3, capped)
   python scripts/eicma_campaign.py --report   # print eligibility counts, create nothing
-  EICMA_FINAL_REMINDER=1 python scripts/eicma_campaign.py   # wave_4 final reminder
+  EICMA_FINAL_REMINDER=1 python scripts/eicma_campaign.py   # wave_5 final reminder
 """
 
 from __future__ import annotations
@@ -55,7 +55,9 @@ DAILY_BATCH_SIZE = 20
 MAX_CYCLES = 3
 MIN_DAYS_BETWEEN = 14
 REGULAR_WAVES = (1, 2, 3)
-FINAL_WAVE = 4
+FINAL_WAVE = 5
+# Gap for the final wave only (contacts got the earlier plain wave_4 draft).
+FINAL_MIN_DAYS_BETWEEN = 7
 FROM_EMAIL = "hm@relianmfg.com"
 # No drafts are created on or after this UTC date (the show starts Nov 3).
 FINAL_CUTOFF = date(2026, 11, 2)
@@ -73,10 +75,10 @@ HELPDESK_LOCALS = frozenset(
 WAVE_INLINE_BANNERS = {
     2: (BRANDING_DIR / "eicma_wave2_banner.jpg", "eicma-wave2-banner"),
     3: (BRANDING_DIR / "eicma_wave3_banner.jpg", "eicma-wave3-banner"),
-    4: (BRANDING_DIR / "eicma_wave5_banner.jpg", "eicma-wave4-banner"),
+    5: (BRANDING_DIR / "eicma_wave5_banner.jpg", "eicma-wave5-banner"),
 }
-# wave_4 is a minimal personal-looking email: wave_4.html (one inline banner, no button, no
-# footer) with wave_4.txt as the text/plain alternative. It greets by first name only.
+# wave_5 is a minimal personal-looking email: wave_5.html (one inline banner, no button, no
+# footer) with wave_5.txt as the text/plain alternative. It greets by first name only.
 PLAIN_TEXT_WAVES: frozenset = frozenset()
 FIRST_NAME_WAVES = frozenset({FINAL_WAVE})
 # Domains never used to derive a brand name for the subject.
@@ -183,7 +185,7 @@ def load_wave_meta(wave_number: int) -> dict:
 
 
 def load_plain_alt(wave_number: int) -> str | None:
-    """text/plain alternative for HTML waves that ship a matching .txt (wave_4)."""
+    """text/plain alternative for HTML waves that ship a matching .txt (wave_5)."""
     path = WAVES_DIR / f"wave_{wave_number}.txt"
     return path.read_text(encoding="utf-8") if path.exists() and wave_number not in PLAIN_TEXT_WAVES else None
 
@@ -217,7 +219,7 @@ def is_eligible(contact: dict, now: datetime, final: bool = False) -> bool:
     if final and is_helpdesk_email(contact.get("email")):
         return False
     last_sent = _parse_ts(contact.get("last_sent_at"))
-    if last_sent and now - last_sent < timedelta(days=MIN_DAYS_BETWEEN):
+    if last_sent and now - last_sent < timedelta(days=FINAL_MIN_DAYS_BETWEEN if final else MIN_DAYS_BETWEEN):
         return False
     if final:
         return contact.get("last_wave_design") != f"wave_{FINAL_WAVE}"
@@ -232,7 +234,7 @@ def wave_for(contact: dict, final: bool) -> int:
 
 def select_batch(contacts: list[dict], now: datetime, final: bool) -> tuple[list[dict], int]:
     """Returns (batch of at most DAILY_BATCH_SIZE, total eligible). Oldest last_sent_at first.
-    In final mode an address that already has wave_4 on ANY row is excluded, and each address
+    In final mode an address that already has wave_5 on ANY row is excluded, and each address
     appears at most once in the batch."""
     already_final: set[str] = set()
     if final:

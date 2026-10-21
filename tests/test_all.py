@@ -66,10 +66,13 @@ NOW = datetime(2026, 10, 16, 9, 0, tzinfo=timezone.utc)
 class Guards(unittest.TestCase):
     def c(self, **k): return {"email": "a@b.com", "suppressed": False, "last_sent_at": None, "cycle_number": 3, **k}
     def test_helpdesk(self): self.assertFalse(ec.is_eligible(self.c(email="support@x.com"), NOW, True))
-    def test_gap(self): self.assertFalse(ec.is_eligible(self.c(last_sent_at="2026-10-10T00:00:00Z"), NOW, True))
-    def test_already_wave4(self): self.assertFalse(ec.is_eligible(self.c(last_wave_design="wave_4"), NOW, True))
+    def test_gap(self): self.assertFalse(ec.is_eligible(self.c(last_sent_at="2026-10-12T00:00:00Z"), NOW, True))
+    def test_wave4_recipient_gets_banner_after_7d(self):
+        self.assertTrue(ec.is_eligible(self.c(last_sent_at="2026-10-07T00:00:00Z", last_wave_design="wave_4"), NOW, True))
+        self.assertFalse(ec.is_eligible(self.c(last_sent_at="2026-10-13T00:00:00Z", last_wave_design="wave_4"), NOW, True))
+    def test_already_wave4(self): self.assertFalse(ec.is_eligible(self.c(last_wave_design="wave_5"), NOW, True))
     def test_dup_address_already_wave4(self):
-        rows = [self.c(id=1, last_wave_design="wave_4"), self.c(id=2)]
+        rows = [self.c(id=1, last_wave_design="wave_5"), self.c(id=2)]
         self.assertEqual(ec.select_batch(rows, NOW, True)[1], 0)
     def test_cutoff(self):
         self.assertFalse(ec.is_eligible(self.c(), datetime(2026, 11, 2, tzinfo=timezone.utc), True))
@@ -82,14 +85,14 @@ class Guards(unittest.TestCase):
 
 class Wave4(unittest.TestCase):
     def test_template_and_subject(self):
-        body, subject = ec.load_wave(4)
+        body, subject = ec.load_wave(5)
         self.assertEqual(subject, "meet at EICMA?")
         self.assertIn("{{GREETING}}", body)
-        self.assertIn("cid:eicma-wave4-banner", body)
+        self.assertIn("cid:eicma-wave5-banner", body)
         self.assertIn("Hall 14", body)
         self.assertNotIn("sialkot", body.lower())
         self.assertNotIn("pakistan", body.lower())
-        self.assertIn("{{GREETING}}", ec.load_plain_alt(4))
+        self.assertIn("{{GREETING}}", ec.load_plain_alt(5))
 
     def test_brand_names(self):
         cases = {"a@motorrad-schmidt.it": "Motorrad Schmidt", "a@gmail.com": None,
@@ -100,13 +103,13 @@ class Wave4(unittest.TestCase):
             self.assertEqual(ec.brand_from_email(email), want, email)
 
     def test_subject_builder(self):
-        meta = ec.load_wave_meta(4)
-        self.assertEqual(ec.build_subject(4, "a@ducati.it", meta), "Ducati — meet at EICMA?")
-        self.assertEqual(ec.build_subject(4, "a@gmail.com", meta), "meet at EICMA?")
+        meta = ec.load_wave_meta(5)
+        self.assertEqual(ec.build_subject(5, "a@ducati.it", meta), "Ducati — meet at EICMA?")
+        self.assertEqual(ec.build_subject(5, "a@gmail.com", meta), "meet at EICMA?")
 
     def test_banner_registered_and_small(self):
-        path, cid = ec.WAVE_INLINE_BANNERS[4]
-        self.assertEqual(cid, "eicma-wave4-banner")
+        path, cid = ec.WAVE_INLINE_BANNERS[5]
+        self.assertEqual(cid, "eicma-wave5-banner")
         self.assertTrue(path.exists())
         self.assertLess(path.stat().st_size, 200_000)
 
@@ -134,19 +137,19 @@ class Wave4(unittest.TestCase):
         self.assertEqual([p.get_content_type() for p in msg.walk() if not p.is_multipart()], ["text/plain"])
 
     def test_mime_wave4(self):
-        html_t, _ = ec.load_wave(4)
-        path, cid = ec.WAVE_INLINE_BANNERS[4]
+        html_t, _ = ec.load_wave(5)
+        path, cid = ec.WAVE_INLINE_BANNERS[5]
         msg = self._draft(body=html_t.replace("{{GREETING}}", "Marco"), is_html=True,
                           inline_image_path=path, inline_image_cid=cid,
-                          plain_alt=ec.load_plain_alt(4).replace("{{GREETING}}", "Marco"))
+                          plain_alt=ec.load_plain_alt(5).replace("{{GREETING}}", "Marco"))
         leaves = [p for p in msg.walk() if not p.is_multipart()]
         self.assertEqual(sorted(p.get_content_type() for p in leaves), ["image/jpeg", "text/html", "text/plain"])
         self.assertIn("multipart/related", [p.get_content_type() for p in msg.walk()])
         img = [p for p in leaves if p.get_content_type() == "image/jpeg"]
         self.assertEqual(len(img), 1)
-        self.assertEqual(img[0]["Content-ID"], "<eicma-wave4-banner>")
+        self.assertEqual(img[0]["Content-ID"], "<eicma-wave5-banner>")
         htm = [p for p in leaves if p.get_content_type() == "text/html"][0].get_payload(decode=True).decode()
-        self.assertIn("cid:eicma-wave4-banner", htm)
+        self.assertIn("cid:eicma-wave5-banner", htm)
         self.assertNotIn("sialkot", htm.lower())
         self.assertIn("Hi Marco,", [p for p in leaves if p.get_content_type() == "text/plain"][0].get_payload(decode=True).decode())
 
