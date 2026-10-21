@@ -124,6 +124,9 @@ class Wave4(unittest.TestCase):
         self.assertTrue(path.exists())
         self.assertLess(path.stat().st_size, 200_000)
 
+    def test_team_greeting_fallback(self):
+        self.assertEqual(f"Team {ec.brand_from_email('info@ducati.it')}", "Team Ducati")
+
     def test_greeting(self):
         with mock.patch.object(ec, "generate", return_value="Marco"):
             self.assertEqual(ec.extract_first_name("Marco Rossi - Moto SRL"), "Marco")

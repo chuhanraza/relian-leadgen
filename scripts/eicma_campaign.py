@@ -324,6 +324,10 @@ def run() -> None:
         plain = wave in PLAIN_TEXT_WAVES
         use_first_name = plain or wave in FIRST_NAME_WAVES
         greeting = (extract_first_name if use_first_name else extract_greeting)(contact["contact_name"] or "")
+        if use_first_name and greeting == "there":
+            brand = brand_from_email(contact["email"])
+            if brand:
+                greeting = f"Team {brand}"
         rendered_html = html_template.replace("{{GREETING}}", greeting)
         alt = load_plain_alt(wave)
         plain_alt = alt.replace("{{GREETING}}", greeting) if alt else None
