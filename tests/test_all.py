@@ -70,12 +70,23 @@ class Guards(unittest.TestCase):
     def test_wave4_recipient_gets_banner_after_7d(self):
         self.assertTrue(ec.is_eligible(self.c(last_sent_at="2026-10-07T00:00:00Z", last_wave_design="wave_4"), NOW, True))
         self.assertFalse(ec.is_eligible(self.c(last_sent_at="2026-10-13T00:00:00Z", last_wave_design="wave_4"), NOW, True))
-    def test_already_wave4(self): self.assertFalse(ec.is_eligible(self.c(last_wave_design="wave_5"), NOW, True))
+    def test_already_wave6(self): self.assertFalse(ec.is_eligible(self.c(last_wave_design="wave_6"), NOW, True))
+    def test_wave5_waits_for_show(self):
+        c = self.c(last_wave_design="wave_5", last_sent_at="2026-10-10T00:00:00Z")
+        self.assertFalse(ec.is_eligible(c, NOW, True))
+        show = datetime(2026, 11, 4, 12, tzinfo=timezone.utc)
+        self.assertTrue(ec.is_eligible(c, show, True))
+        self.assertEqual(ec.wave_for(c, True), 6)
+        self.assertFalse(ec.is_eligible(self.c(last_wave_design="wave_5", last_sent_at="2026-11-02T12:00:00Z"), show, True))
     def test_dup_address_already_wave4(self):
-        rows = [self.c(id=1, last_wave_design="wave_5"), self.c(id=2)]
+        rows = [self.c(id=1, last_wave_design="wave_5", last_sent_at="2026-10-15T00:00:00Z"), self.c(id=2)]
         self.assertEqual(ec.select_batch(rows, NOW, True)[1], 0)
     def test_cutoff(self):
-        self.assertFalse(ec.is_eligible(self.c(), datetime(2026, 11, 2, tzinfo=timezone.utc), True))
+        self.assertFalse(ec.is_eligible(self.c(), datetime(2026, 11, 9, tzinfo=timezone.utc), True))
+    def test_last_show_day_still_drafts(self):
+        self.assertTrue(ec.is_eligible(self.c(), datetime(2026, 11, 8, 12, tzinfo=timezone.utc), True))
+    def test_localized_helpdesk(self):
+        self.assertTrue(ec.is_helpdesk_email("servicioalcliente@x.com"))
     def test_eligible(self): self.assertTrue(ec.is_eligible(self.c(), NOW, True))
     def test_select_all_rows_over_1000(self):
         rows = [self.c(id=i, email=f"u{i}@x.com") for i in range(1500)]

@@ -19,7 +19,7 @@ Final-mode guards (all in is_eligible/select_batch, shared by the run and --repo
   * helpdesk-style inboxes (support, service, customerservice, help, care, noreply, orders,
     returns) are skipped;
   * 14-day gap since last_sent_at and the 20/day batch cap still apply;
-  * no drafts on or after FINAL_CUTOFF (2026-11-02, UTC) in any mode.
+  * no drafts on or after FINAL_CUTOFF (2026-11-09, UTC; show ends 8 Nov) in any mode.
 
 Same hard rule as the rest of this repo: only ever calls gmail drafts().create, never
 messages().send. Hamad reviews and bulk-sends drafts manually.
@@ -56,15 +56,22 @@ MAX_CYCLES = 3
 MIN_DAYS_BETWEEN = 14
 REGULAR_WAVES = (1, 2, 3)
 FINAL_WAVE = 5
+# wave_6: short plain-text 'I'm at the stand' follow-up, only from SHOW_START, only after wave_5.
+SHOW_WAVE = 6
+SHOW_MIN_DAYS_BETWEEN = 4
 # Gap for the final wave only (contacts got the earlier plain wave_4 draft).
 FINAL_MIN_DAYS_BETWEEN = 7
 FROM_EMAIL = "hm@relianmfg.com"
 # No drafts are created on or after this UTC date (the show starts Nov 3).
-FINAL_CUTOFF = date(2026, 11, 2)
+# EICMA runs 3-8 Nov; drafts continue through the last show day (cutoff is the day after).
+FINAL_CUTOFF = date(2026, 11, 9)
+SHOW_START = date(2026, 11, 3)
 # Local parts of helpdesk-style inboxes that are never mailed (matched after dropping . _ - +
 # separators, and also against the first separator-delimited token, e.g. "support.eu").
 HELPDESK_LOCALS = frozenset(
-    {"support", "service", "customerservice", "help", "care", "noreply", "orders", "returns"}
+    {"support", "service", "customerservice", "help", "care", "noreply", "orders", "returns",
+     "servicioalcliente", "atencionalcliente", "serviceclient", "serviceclients",
+     "servicecliente", "kundenservice", "atencioncliente", "customercare"}
 )
 
 # Waves whose template embeds a single approved banner inline via cid: (gmail_client's
@@ -79,8 +86,8 @@ WAVE_INLINE_BANNERS = {
 }
 # wave_5 is a minimal personal-looking email: wave_5.html (one inline banner, no button, no
 # footer) with wave_5.txt as the text/plain alternative. It greets by first name only.
-PLAIN_TEXT_WAVES: frozenset = frozenset()
-FIRST_NAME_WAVES = frozenset({FINAL_WAVE})
+PLAIN_TEXT_WAVES: frozenset = frozenset({SHOW_WAVE})
+FIRST_NAME_WAVES = frozenset({FINAL_WAVE, SHOW_WAVE})
 # Domains never used to derive a brand name for the subject.
 _GENERIC_DOMAINS = frozenset({"gmail", "yahoo", "hotmail", "outlook", "icloud", "live", "aol",
                               "gmx", "web", "libero", "virgilio", "tiscali", "mail", "msn"})
@@ -219,16 +226,24 @@ def is_eligible(contact: dict, now: datetime, final: bool = False) -> bool:
     if final and is_helpdesk_email(contact.get("email")):
         return False
     last_sent = _parse_ts(contact.get("last_sent_at"))
-    if last_sent and now - last_sent < timedelta(days=FINAL_MIN_DAYS_BETWEEN if final else MIN_DAYS_BETWEEN):
-        return False
     if final:
-        return contact.get("last_wave_design") != f"wave_{FINAL_WAVE}"
+        last = contact.get("last_wave_design")
+        if last == f"wave_{SHOW_WAVE}":
+            return False
+        gap = SHOW_MIN_DAYS_BETWEEN if last == f"wave_{FINAL_WAVE}" else FINAL_MIN_DAYS_BETWEEN
+        if last_sent and now - last_sent < timedelta(days=gap):
+            return False
+        if last == f"wave_{FINAL_WAVE}":
+            return now.astimezone(timezone.utc).date() >= SHOW_START
+        return True
+    if last_sent and now - last_sent < timedelta(days=MIN_DAYS_BETWEEN):
+        return False
     return (contact.get("cycle_number") or 0) < MAX_CYCLES
 
 
 def wave_for(contact: dict, final: bool) -> int:
     if final:
-        return FINAL_WAVE
+        return SHOW_WAVE if contact.get("last_wave_design") == f"wave_{FINAL_WAVE}" else FINAL_WAVE
     return REGULAR_WAVES[min(contact.get("cycle_number") or 0, len(REGULAR_WAVES) - 1)]
 
 
@@ -241,12 +256,17 @@ def select_batch(contacts: list[dict], now: datetime, final: bool) -> tuple[list
         already_final = {
             (c.get("email") or "").strip().lower()
             for c in contacts
-            if c.get("last_wave_design") == f"wave_{FINAL_WAVE}"
+            if c.get("last_wave_design") == f"wave_{SHOW_WAVE}"
         }
+    at_wave5 = {(c.get("email") or "").strip().lower() for c in contacts
+                if final and c.get("last_wave_design") == f"wave_{FINAL_WAVE}"}
     eligible, seen = [], set()
     for c in contacts:
         email = (c.get("email") or "").strip().lower()
         if not is_eligible(c, now, final) or email in already_final or email in seen:
+            continue
+        # a duplicate row of an address that already has wave_5 must not get wave_5 again
+        if email in at_wave5 and c.get("last_wave_design") != f"wave_{FINAL_WAVE}":
             continue
         seen.add(email)
         eligible.append(c)
