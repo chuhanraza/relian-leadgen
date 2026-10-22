@@ -141,6 +141,8 @@ class Wave4(unittest.TestCase):
         captured = {}
         svc = mock.MagicMock()
         svc.users().drafts().create.side_effect = lambda userId, body: captured.update(b=body) or mock.Mock(execute=lambda: {"id": "d"})
+        svc.users().drafts().get.side_effect = lambda userId, id, format: mock.Mock(execute=lambda: {"message": {"payload": {
+            "parts": [{"mimeType": "image/jpeg", "body": {"attachmentId": "a"}}]}}})
         with mock.patch.object(gmail_client, "build", return_value=svc), mock.patch.object(gmail_client, "_credentials"):
             gmail_client.create_draft("a@b.com", "s", from_email="hm@relianmfg.com", **kw)
         import email
@@ -166,6 +168,35 @@ class Wave4(unittest.TestCase):
         self.assertIn("cid:eicma-wave5-banner", htm)
         self.assertNotIn("sialkot", htm.lower())
         self.assertIn("Hi Marco,", [p for p in leaves if p.get_content_type() == "text/plain"][0].get_payload(decode=True).decode())
+
+
+class ImageVerify(unittest.TestCase):
+    def _svc(self, has_image_by_call):
+        svc = mock.MagicMock()
+        ids = iter(f"d{i}" for i in range(10))
+        svc.users().drafts().create.side_effect = lambda userId, body: mock.Mock(execute=lambda: {"id": next(ids)})
+        calls = iter(has_image_by_call)
+        def get(userId, id, format):
+            ok = next(calls)
+            part = {"mimeType": "image/jpeg", "body": {"attachmentId": "a"}} if ok else {"mimeType": "text/html", "body": {}}
+            return mock.Mock(execute=lambda: {"message": {"payload": {"mimeType": "multipart/related", "parts": [part]}}})
+        svc.users().drafts().get.side_effect = get
+        return svc
+
+    def _run(self, svc):
+        path, cid = ec.WAVE_INLINE_BANNERS[5]
+        with mock.patch.object(gmail_client, "build", return_value=svc), mock.patch.object(gmail_client, "_credentials"):
+            return gmail_client.create_draft("a@b.com", "s", "<img src='cid:%s'>" % cid, from_email="x@y.com",
+                                             is_html=True, inline_image_path=path, inline_image_cid=cid)
+
+    def test_retries_when_image_missing(self):
+        svc = self._svc([False, True])
+        self.assertEqual(self._run(svc), "d1")
+        svc.users().drafts().delete.assert_called()
+
+    def test_gives_up_after_three(self):
+        with self.assertRaises(RuntimeError):
+            self._run(self._svc([False, False, False]))
 
 
 class NoSialkot(unittest.TestCase):

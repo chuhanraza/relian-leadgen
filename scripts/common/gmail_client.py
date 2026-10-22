@@ -141,13 +141,41 @@ def create_draft(
 
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
 
-    draft = (
-        service.users()
-        .drafts()
-        .create(userId="me", body={"message": {"raw": raw}})
-        .execute()
-    )
-    return draft["id"]
+    for attempt in range(3):
+        draft = (
+            service.users()
+            .drafts()
+            .create(userId="me", body={"message": {"raw": raw}})
+            .execute()
+        )
+        if inline_data is None or _draft_has_image(service, draft["id"]):
+            return draft["id"]
+        # Gmail sometimes stores the draft without its inline image (shows as a broken "?").
+        # Delete the bad copy and try again rather than leaving it for the user to send.
+        print(f"[gmail_client] draft {draft['id']} saved without its image (attempt {attempt + 1}); retrying")
+        try:
+            service.users().drafts().delete(userId="me", id=draft["id"]).execute()
+        except Exception:  # noqa: BLE001
+            pass
+    raise RuntimeError("Gmail kept saving the draft without its inline image")
+
+
+def _draft_has_image(service, draft_id: str) -> bool:
+    """True if the saved draft still contains an image part with real data."""
+    try:
+        full = service.users().drafts().get(userId="me", id=draft_id, format="full").execute()
+    except Exception:  # noqa: BLE001 — can't verify: don't block the draft
+        return True
+
+    def walk(part: dict) -> bool:
+        body = part.get("body") or {}
+        if str(part.get("mimeType", "")).startswith("image/") and (
+            body.get("attachmentId") or (body.get("size") or 0) > 1000
+        ):
+            return True
+        return any(walk(sub) for sub in part.get("parts") or [])
+
+    return walk(full.get("message", {}).get("payload", {}))
 
 
 # ---------- reply handling (scripts/reply_handler.py) — RETIRED 2026-08-05. Needs
