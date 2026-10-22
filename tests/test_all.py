@@ -99,7 +99,8 @@ class Wave4(unittest.TestCase):
         body, subject = ec.load_wave(5)
         self.assertEqual(subject, "meet at EICMA?")
         self.assertIn("{{GREETING}}", body)
-        self.assertIn("cid:eicma-wave5-banner", body)
+        self.assertIn("raw.githubusercontent.com/chuhanraza/relian-leadgen/main/assets/branding/eicma_wave5_banner.jpg", body)
+        self.assertNotIn("cid:", body)
         self.assertIn("Hall 14", body)
         self.assertNotIn("sialkot", body.lower())
         self.assertNotIn("pakistan", body.lower())
@@ -118,11 +119,11 @@ class Wave4(unittest.TestCase):
         self.assertEqual(ec.build_subject(5, "a@ducati.it", meta), "Ducati — meet at EICMA?")
         self.assertEqual(ec.build_subject(5, "a@gmail.com", meta), "meet at EICMA?")
 
-    def test_banner_registered_and_small(self):
-        path, cid = ec.WAVE_INLINE_BANNERS[5]
-        self.assertEqual(cid, "eicma-wave5-banner")
+    def test_banner_file_exists_and_small(self):
+        path = ec.BRANDING_DIR / "eicma_wave5_banner.jpg"
         self.assertTrue(path.exists())
         self.assertLess(path.stat().st_size, 200_000)
+        self.assertNotIn(5, ec.WAVE_INLINE_BANNERS)
 
     def test_team_greeting_fallback(self):
         self.assertEqual(f"Team {ec.brand_from_email('info@ducati.it')}", "Team Ducati")
@@ -152,22 +153,11 @@ class Wave4(unittest.TestCase):
         msg = self._draft(body="Hi there,\n\nbody", is_html=False)
         self.assertEqual([p.get_content_type() for p in msg.walk() if not p.is_multipart()], ["text/plain"])
 
-    def test_mime_wave4(self):
+    def test_mime_wave5_single_html_part(self):
         html_t, _ = ec.load_wave(5)
-        path, cid = ec.WAVE_INLINE_BANNERS[5]
-        msg = self._draft(body=html_t.replace("{{GREETING}}", "Marco"), is_html=True,
-                          inline_image_path=path, inline_image_cid=cid,
-                          plain_alt=ec.load_plain_alt(5).replace("{{GREETING}}", "Marco"))
+        msg = self._draft(body=html_t.replace("{{GREETING}}", "Marco"), is_html=True)
         leaves = [p for p in msg.walk() if not p.is_multipart()]
-        self.assertEqual(sorted(p.get_content_type() for p in leaves), ["image/jpeg", "text/html", "text/plain"])
-        self.assertIn("multipart/related", [p.get_content_type() for p in msg.walk()])
-        img = [p for p in leaves if p.get_content_type() == "image/jpeg"]
-        self.assertEqual(len(img), 1)
-        self.assertEqual(img[0]["Content-ID"], "<eicma-wave5-banner>")
-        htm = [p for p in leaves if p.get_content_type() == "text/html"][0].get_payload(decode=True).decode()
-        self.assertIn("cid:eicma-wave5-banner", htm)
-        self.assertNotIn("sialkot", htm.lower())
-        self.assertIn("Hi Marco,", [p for p in leaves if p.get_content_type() == "text/plain"][0].get_payload(decode=True).decode())
+        self.assertEqual([p.get_content_type() for p in leaves], ["text/html"])
 
 
 class ImageVerify(unittest.TestCase):
@@ -184,7 +174,7 @@ class ImageVerify(unittest.TestCase):
         return svc
 
     def _run(self, svc):
-        path, cid = ec.WAVE_INLINE_BANNERS[5]
+        path, cid = ec.WAVE_INLINE_BANNERS[3]
         with mock.patch.object(gmail_client, "build", return_value=svc), mock.patch.object(gmail_client, "_credentials"):
             return gmail_client.create_draft("a@b.com", "s", "<img src='cid:%s'>" % cid, from_email="x@y.com",
                                              is_html=True, inline_image_path=path, inline_image_cid=cid)

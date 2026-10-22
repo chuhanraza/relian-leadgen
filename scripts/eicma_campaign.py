@@ -82,7 +82,8 @@ HELPDESK_LOCALS = frozenset(
 WAVE_INLINE_BANNERS = {
     2: (BRANDING_DIR / "eicma_wave2_banner.jpg", "eicma-wave2-banner"),
     3: (BRANDING_DIR / "eicma_wave3_banner.jpg", "eicma-wave3-banner"),
-    5: (BRANDING_DIR / "eicma_wave5_banner.jpg", "eicma-wave5-banner"),
+    # wave_5 loads its banner from a hosted URL (see wave_5.html): an attached inline image
+    # showed twice in some mail apps after Gmail sent it. Keep the repo public until 8 Nov.
 }
 # wave_5 is a minimal personal-looking email: wave_5.html (one inline banner, no button, no
 # footer) with wave_5.txt as the text/plain alternative. It greets by first name only.
