@@ -70,16 +70,21 @@ class Guards(unittest.TestCase):
     def test_wave4_recipient_gets_banner_after_7d(self):
         self.assertTrue(ec.is_eligible(self.c(last_sent_at="2026-10-07T00:00:00Z", last_wave_design="wave_4"), NOW, True))
         self.assertFalse(ec.is_eligible(self.c(last_sent_at="2026-10-13T00:00:00Z", last_wave_design="wave_4"), NOW, True))
-    def test_already_wave6(self): self.assertFalse(ec.is_eligible(self.c(last_wave_design="wave_6"), NOW, True))
-    def test_wave5_waits_for_show(self):
+    def test_already_wave7(self): self.assertFalse(ec.is_eligible(self.c(last_wave_design="wave_7"), NOW, True))
+    def test_wave5_gets_reminder_after_5d(self):
         c = self.c(last_wave_design="wave_5", last_sent_at="2026-10-10T00:00:00Z")
+        self.assertTrue(ec.is_eligible(c, NOW, True))
+        self.assertEqual(ec.wave_for(c, True), 6)
+        self.assertFalse(ec.is_eligible(self.c(last_wave_design="wave_5", last_sent_at="2026-10-14T00:00:00Z"), NOW, True))
+    def test_wave6_waits_for_show_then_gets_wave7(self):
+        c = self.c(last_wave_design="wave_6", last_sent_at="2026-10-20T00:00:00Z")
         self.assertFalse(ec.is_eligible(c, NOW, True))
         show = datetime(2026, 11, 4, 12, tzinfo=timezone.utc)
         self.assertTrue(ec.is_eligible(c, show, True))
-        self.assertEqual(ec.wave_for(c, True), 6)
-        self.assertFalse(ec.is_eligible(self.c(last_wave_design="wave_5", last_sent_at="2026-11-02T12:00:00Z"), show, True))
+        self.assertEqual(ec.wave_for(c, True), 7)
+        self.assertFalse(ec.is_eligible(self.c(last_wave_design="wave_6", last_sent_at="2026-11-02T12:00:00Z"), show, True))
     def test_dup_address_already_wave4(self):
-        rows = [self.c(id=1, last_wave_design="wave_5", last_sent_at="2026-10-15T00:00:00Z"), self.c(id=2)]
+        rows = [self.c(id=1, last_wave_design="wave_6", last_sent_at="2026-10-15T00:00:00Z"), self.c(id=2)]
         self.assertEqual(ec.select_batch(rows, NOW, True)[1], 0)
     def test_cutoff(self):
         self.assertFalse(ec.is_eligible(self.c(), datetime(2026, 11, 9, tzinfo=timezone.utc), True))
@@ -105,6 +110,16 @@ class Wave4(unittest.TestCase):
         self.assertNotIn("sialkot", body.lower())
         self.assertNotIn("pakistan", body.lower())
         self.assertIn("{{GREETING}}", ec.load_plain_alt(5))
+
+    def test_wave6_and_wave7_templates(self):
+        body6, subj6 = ec.load_wave(6)
+        self.assertIn("eicma_banner_road.jpg", body6)
+        self.assertIn("Hall 14", body6)
+        self.assertEqual(subj6, "see you at EICMA?")
+        self.assertEqual(ec.build_subject(6, "a@ducati.it", ec.load_wave_meta(6)), "Ducati — see you at EICMA?")
+        body7, subj7 = ec.load_wave(7)
+        self.assertNotIn("<", body7)
+        self.assertIn("{{GREETING}}", body7)
 
     def test_brand_names(self):
         cases = {"a@motorrad-schmidt.it": "Motorrad Schmidt", "a@gmail.com": None,

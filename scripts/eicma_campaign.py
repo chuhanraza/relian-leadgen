@@ -56,8 +56,11 @@ MAX_CYCLES = 3
 MIN_DAYS_BETWEEN = 14
 REGULAR_WAVES = (1, 2, 3)
 FINAL_WAVE = 5
-# wave_6: short plain-text 'I'm at the stand' follow-up, only from SHOW_START, only after wave_5.
-SHOW_WAVE = 6
+# wave_6: reminder with the road banner (after wave_5). wave_7: short plain-text "I'm at the
+# stand" follow-up, only from SHOW_START, only after wave_6.
+REMINDER_WAVE = 6
+REMINDER_MIN_DAYS_BETWEEN = 5
+SHOW_WAVE = 7
 SHOW_MIN_DAYS_BETWEEN = 4
 # Gap for the final wave only (contacts got the earlier plain wave_4 draft).
 FINAL_MIN_DAYS_BETWEEN = 7
@@ -88,7 +91,7 @@ WAVE_INLINE_BANNERS = {
 # wave_5 is a minimal personal-looking email: wave_5.html (one inline banner, no button, no
 # footer) with wave_5.txt as the text/plain alternative. It greets by first name only.
 PLAIN_TEXT_WAVES: frozenset = frozenset({SHOW_WAVE})
-FIRST_NAME_WAVES = frozenset({FINAL_WAVE, SHOW_WAVE})
+FIRST_NAME_WAVES = frozenset({FINAL_WAVE, REMINDER_WAVE, SHOW_WAVE})
 # Domains never used to derive a brand name for the subject.
 _GENERIC_DOMAINS = frozenset({"gmail", "yahoo", "hotmail", "outlook", "icloud", "live", "aol",
                               "gmx", "web", "libero", "virgilio", "tiscali", "mail", "msn"})
@@ -231,10 +234,15 @@ def is_eligible(contact: dict, now: datetime, final: bool = False) -> bool:
         last = contact.get("last_wave_design")
         if last == f"wave_{SHOW_WAVE}":
             return False
-        gap = SHOW_MIN_DAYS_BETWEEN if last == f"wave_{FINAL_WAVE}" else FINAL_MIN_DAYS_BETWEEN
+        if last == f"wave_{REMINDER_WAVE}":
+            gap = SHOW_MIN_DAYS_BETWEEN
+        elif last == f"wave_{FINAL_WAVE}":
+            gap = REMINDER_MIN_DAYS_BETWEEN
+        else:
+            gap = FINAL_MIN_DAYS_BETWEEN
         if last_sent and now - last_sent < timedelta(days=gap):
             return False
-        if last == f"wave_{FINAL_WAVE}":
+        if last == f"wave_{REMINDER_WAVE}":
             return now.astimezone(timezone.utc).date() >= SHOW_START
         return True
     if last_sent and now - last_sent < timedelta(days=MIN_DAYS_BETWEEN):
@@ -244,7 +252,10 @@ def is_eligible(contact: dict, now: datetime, final: bool = False) -> bool:
 
 def wave_for(contact: dict, final: bool) -> int:
     if final:
-        return SHOW_WAVE if contact.get("last_wave_design") == f"wave_{FINAL_WAVE}" else FINAL_WAVE
+        last = contact.get("last_wave_design")
+        if last == f"wave_{REMINDER_WAVE}":
+            return SHOW_WAVE
+        return REMINDER_WAVE if last == f"wave_{FINAL_WAVE}" else FINAL_WAVE
     return REGULAR_WAVES[min(contact.get("cycle_number") or 0, len(REGULAR_WAVES) - 1)]
 
 
@@ -259,15 +270,19 @@ def select_batch(contacts: list[dict], now: datetime, final: bool) -> tuple[list
             for c in contacts
             if c.get("last_wave_design") == f"wave_{SHOW_WAVE}"
         }
-    at_wave5 = {(c.get("email") or "").strip().lower() for c in contacts
-                if final and c.get("last_wave_design") == f"wave_{FINAL_WAVE}"}
+    rank = {f"wave_{FINAL_WAVE}": 1, f"wave_{REMINDER_WAVE}": 2, f"wave_{SHOW_WAVE}": 3}
+    best: dict[str, int] = {}
+    if final:
+        for c in contacts:
+            e = (c.get("email") or "").strip().lower()
+            best[e] = max(best.get(e, 0), rank.get(c.get("last_wave_design"), 0))
     eligible, seen = [], set()
     for c in contacts:
         email = (c.get("email") or "").strip().lower()
         if not is_eligible(c, now, final) or email in already_final or email in seen:
             continue
-        # a duplicate row of an address that already has wave_5 must not get wave_5 again
-        if email in at_wave5 and c.get("last_wave_design") != f"wave_{FINAL_WAVE}":
+        # a duplicate row of an address that is further along must not be mailed again
+        if rank.get(c.get("last_wave_design"), 0) < best.get(email, 0):
             continue
         seen.add(email)
         eligible.append(c)
