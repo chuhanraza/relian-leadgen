@@ -99,7 +99,7 @@ class Wave4(unittest.TestCase):
         body, subject = ec.load_wave(5)
         self.assertEqual(subject, "meet at EICMA?")
         self.assertIn("{{GREETING}}", body)
-        self.assertIn("raw.githubusercontent.com/chuhanraza/relian-leadgen/main/assets/branding/eicma_wave5_banner.jpg", body)
+        self.assertIn("raw.githubusercontent.com/chuhanraza/relian-leadgen/main/assets/branding/eicma_banner_road.jpg", body)
         self.assertNotIn("cid:", body)
         self.assertIn("Hall 14", body)
         self.assertNotIn("sialkot", body.lower())
@@ -120,7 +120,7 @@ class Wave4(unittest.TestCase):
         self.assertEqual(ec.build_subject(5, "a@gmail.com", meta), "meet at EICMA?")
 
     def test_banner_file_exists_and_small(self):
-        path = ec.BRANDING_DIR / "eicma_wave5_banner.jpg"
+        path = ec.BRANDING_DIR / "eicma_banner_road.jpg"
         self.assertTrue(path.exists())
         self.assertLess(path.stat().st_size, 200_000)
         self.assertNotIn(5, ec.WAVE_INLINE_BANNERS)
