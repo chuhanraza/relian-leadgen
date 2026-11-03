@@ -121,11 +121,11 @@ class Wave4(unittest.TestCase):
         self.assertEqual(subj6, "see you at EICMA?")
         self.assertEqual(ec.build_subject(6, "a@ducati.it", ec.load_wave_meta(6)), "Ducati — see you at EICMA?")
         body7, subj7 = ec.load_wave(7)
-        self.assertIn("eicma_stand_v3.jpg", body7)
+        self.assertIn("eicma_stand_v4.jpg", body7)
         self.assertIn("Hall 14", body7)
         self.assertIn("{{GREETING}}", body7)
-        self.assertTrue((ec.BRANDING_DIR / "eicma_stand_v3.jpg").exists())
-        self.assertLess((ec.BRANDING_DIR / "eicma_stand_v3.jpg").stat().st_size, 200_000)
+        self.assertTrue((ec.BRANDING_DIR / "eicma_stand_v4.jpg").exists())
+        self.assertLess((ec.BRANDING_DIR / "eicma_stand_v4.jpg").stat().st_size, 200_000)
 
     def test_brand_names(self):
         cases = {"a@motorrad-schmidt.it": "Motorrad Schmidt", "a@gmail.com": None,
