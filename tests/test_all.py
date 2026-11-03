@@ -74,15 +74,18 @@ class Guards(unittest.TestCase):
     def test_wave5_gets_reminder_after_5d(self):
         c = self.c(last_wave_design="wave_5", last_sent_at="2026-10-10T00:00:00Z")
         self.assertTrue(ec.is_eligible(c, NOW, True))
-        self.assertEqual(ec.wave_for(c, True), 6)
+        self.assertEqual(ec.wave_for(c, True, NOW), 6)
         self.assertFalse(ec.is_eligible(self.c(last_wave_design="wave_5", last_sent_at="2026-10-14T00:00:00Z"), NOW, True))
-    def test_wave6_waits_for_show_then_gets_wave7(self):
-        c = self.c(last_wave_design="wave_6", last_sent_at="2026-10-20T00:00:00Z")
-        self.assertFalse(ec.is_eligible(c, NOW, True))
+    def test_show_days_everyone_gets_wave7(self):
         show = datetime(2026, 11, 4, 12, tzinfo=timezone.utc)
-        self.assertTrue(ec.is_eligible(c, show, True))
-        self.assertEqual(ec.wave_for(c, True), 7)
-        self.assertFalse(ec.is_eligible(self.c(last_wave_design="wave_6", last_sent_at="2026-11-02T12:00:00Z"), show, True))
+        for last in ("wave_5", "wave_6", "wave_4"):
+            c = self.c(last_wave_design=last, last_sent_at="2026-10-30T00:00:00Z")
+            self.assertTrue(ec.is_eligible(c, show, True), last)
+            self.assertEqual(ec.wave_for(c, True, show), 7)
+        self.assertFalse(ec.is_eligible(self.c(last_wave_design="wave_6", last_sent_at="2026-11-03T12:00:00Z"), show, True))
+        self.assertFalse(ec.is_eligible(self.c(last_wave_design="wave_7"), show, True))
+    def test_wave6_waits_before_show(self):
+        self.assertFalse(ec.is_eligible(self.c(last_wave_design="wave_6", last_sent_at="2026-10-20T00:00:00Z"), NOW, True))
     def test_dup_address_already_wave4(self):
         rows = [self.c(id=1, last_wave_design="wave_6", last_sent_at="2026-10-15T00:00:00Z"), self.c(id=2)]
         self.assertEqual(ec.select_batch(rows, NOW, True)[1], 0)
@@ -118,8 +121,11 @@ class Wave4(unittest.TestCase):
         self.assertEqual(subj6, "see you at EICMA?")
         self.assertEqual(ec.build_subject(6, "a@ducati.it", ec.load_wave_meta(6)), "Ducati — see you at EICMA?")
         body7, subj7 = ec.load_wave(7)
-        self.assertNotIn("<", body7)
+        self.assertIn("eicma_stand.jpg", body7)
+        self.assertIn("Hall 14", body7)
         self.assertIn("{{GREETING}}", body7)
+        self.assertTrue((ec.BRANDING_DIR / "eicma_stand.jpg").exists())
+        self.assertLess((ec.BRANDING_DIR / "eicma_stand.jpg").stat().st_size, 200_000)
 
     def test_brand_names(self):
         cases = {"a@motorrad-schmidt.it": "Motorrad Schmidt", "a@gmail.com": None,

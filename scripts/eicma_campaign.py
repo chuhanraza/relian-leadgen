@@ -61,7 +61,7 @@ FINAL_WAVE = 5
 REMINDER_WAVE = 6
 REMINDER_MIN_DAYS_BETWEEN = 5
 SHOW_WAVE = 7
-SHOW_MIN_DAYS_BETWEEN = 4
+SHOW_MIN_DAYS_BETWEEN = 3
 # Gap for the final wave only (contacts got the earlier plain wave_4 draft).
 FINAL_MIN_DAYS_BETWEEN = 7
 FROM_EMAIL = "hm@relianmfg.com"
@@ -90,7 +90,7 @@ WAVE_INLINE_BANNERS = {
 }
 # wave_5 is a minimal personal-looking email: wave_5.html (one inline banner, no button, no
 # footer) with wave_5.txt as the text/plain alternative. It greets by first name only.
-PLAIN_TEXT_WAVES: frozenset = frozenset({SHOW_WAVE})
+PLAIN_TEXT_WAVES: frozenset = frozenset()
 FIRST_NAME_WAVES = frozenset({FINAL_WAVE, REMINDER_WAVE, SHOW_WAVE})
 # Domains never used to derive a brand name for the subject.
 _GENERIC_DOMAINS = frozenset({"gmail", "yahoo", "hotmail", "outlook", "icloud", "live", "aol",
@@ -234,24 +234,29 @@ def is_eligible(contact: dict, now: datetime, final: bool = False) -> bool:
         last = contact.get("last_wave_design")
         if last == f"wave_{SHOW_WAVE}":
             return False
+        if now.astimezone(timezone.utc).date() >= SHOW_START:
+            # show days: everyone not yet at wave_7 gets the "we're at the stand" email
+            if last_sent and now - last_sent < timedelta(days=SHOW_MIN_DAYS_BETWEEN):
+                return False
+            return True
         if last == f"wave_{REMINDER_WAVE}":
-            gap = SHOW_MIN_DAYS_BETWEEN
+            return False  # reminder sent, waits for the show
         elif last == f"wave_{FINAL_WAVE}":
             gap = REMINDER_MIN_DAYS_BETWEEN
         else:
             gap = FINAL_MIN_DAYS_BETWEEN
         if last_sent and now - last_sent < timedelta(days=gap):
             return False
-        if last == f"wave_{REMINDER_WAVE}":
-            return now.astimezone(timezone.utc).date() >= SHOW_START
         return True
     if last_sent and now - last_sent < timedelta(days=MIN_DAYS_BETWEEN):
         return False
     return (contact.get("cycle_number") or 0) < MAX_CYCLES
 
 
-def wave_for(contact: dict, final: bool) -> int:
+def wave_for(contact: dict, final: bool, now: datetime | None = None) -> int:
     if final:
+        if (now or datetime.now(timezone.utc)).astimezone(timezone.utc).date() >= SHOW_START:
+            return SHOW_WAVE
         last = contact.get("last_wave_design")
         if last == f"wave_{REMINDER_WAVE}":
             return SHOW_WAVE
@@ -331,7 +336,7 @@ def run() -> None:
     templates: dict[int, tuple[str, str]] = {}
 
     for contact in contacts:
-        wave = wave_for(contact, final)
+        wave = wave_for(contact, final, now)
         if wave not in templates:
             templates[wave] = load_wave(wave)
         html_template, _default_subject = templates[wave]
