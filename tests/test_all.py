@@ -110,8 +110,6 @@ class Wave4(unittest.TestCase):
         self.assertIn("raw.githubusercontent.com/chuhanraza/relian-leadgen/main/assets/branding/eicma_banner_road.jpg", body)
         self.assertNotIn("cid:", body)
         self.assertIn("Hall 14", body)
-        self.assertNotIn("sialkot", body.lower())
-        self.assertNotIn("pakistan", body.lower())
         self.assertIn("{{GREETING}}", ec.load_plain_alt(5))
 
     def test_wave6_and_wave7_templates(self):
@@ -214,6 +212,9 @@ class NoSialkot(unittest.TestCase):
     def test_grep(self):
         for d in ("config", "scripts", "assets"):
             for p in (ROOT / d).rglob("*"):
+                # Hamad approved the factory address in the EICMA email signature (5 Nov)
+                if p.name in {"wave_5.html", "wave_6.html", "wave_7.html"}:
+                    continue
                 if p.is_file() and p.suffix in {".py", ".html", ".json", ".txt", ".md"}:
                     self.assertNotIn("sialkot", p.read_text(errors="ignore").lower(), str(p))
 
