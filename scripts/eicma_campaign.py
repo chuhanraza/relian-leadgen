@@ -67,7 +67,7 @@ SHOW_MIN_DAYS_BETWEEN = 3
 THANKS_WAVE = 8
 THANKS_MIN_DAYS_BETWEEN = 2
 THANKS_START = date(2026, 11, 7)
-THANKS_FOR_ALL = date(2026, 11, 9)
+THANKS_FOR_ALL = THANKS_START  # everyone gets the thank-you from the day Hamad asked for it
 # Gap for the final wave only (contacts got the earlier plain wave_4 draft).
 FINAL_MIN_DAYS_BETWEEN = 7
 FROM_EMAIL = "hm@relianmfg.com"
