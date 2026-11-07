@@ -62,12 +62,18 @@ REMINDER_WAVE = 6
 REMINDER_MIN_DAYS_BETWEEN = 5
 SHOW_WAVE = 7
 SHOW_MIN_DAYS_BETWEEN = 3
+# wave_8: thank-you / goodbye after EICMA. Contacts at wave_7 get it from now (2+ days after wave_7);
+# everyone else gets it from THANKS_FOR_ALL (day after the show), once.
+THANKS_WAVE = 8
+THANKS_MIN_DAYS_BETWEEN = 2
+THANKS_START = date(2026, 11, 7)
+THANKS_FOR_ALL = date(2026, 11, 9)
 # Gap for the final wave only (contacts got the earlier plain wave_4 draft).
 FINAL_MIN_DAYS_BETWEEN = 7
 FROM_EMAIL = "hm@relianmfg.com"
 # No drafts are created on or after this UTC date (the show starts Nov 3).
 # EICMA runs 3-8 Nov; drafts continue through the last show day (cutoff is the day after).
-FINAL_CUTOFF = date(2026, 11, 9)
+FINAL_CUTOFF = date(2026, 11, 13)
 SHOW_START = date(2026, 11, 3)
 # Local parts of helpdesk-style inboxes that are never mailed (matched after dropping . _ - +
 # separators, and also against the first separator-delimited token, e.g. "support.eu").
@@ -91,7 +97,7 @@ WAVE_INLINE_BANNERS = {
 # wave_5 is a minimal personal-looking email: wave_5.html (one inline banner, no button, no
 # footer) with wave_5.txt as the text/plain alternative. It greets by first name only.
 PLAIN_TEXT_WAVES: frozenset = frozenset()
-FIRST_NAME_WAVES = frozenset({FINAL_WAVE, REMINDER_WAVE, SHOW_WAVE})
+FIRST_NAME_WAVES = frozenset({FINAL_WAVE, REMINDER_WAVE, SHOW_WAVE, THANKS_WAVE})
 # Domains never used to derive a brand name for the subject.
 _GENERIC_DOMAINS = frozenset({"gmail", "yahoo", "hotmail", "outlook", "icloud", "live", "aol",
                               "gmx", "web", "libero", "virgilio", "tiscali", "mail", "msn"})
@@ -232,9 +238,15 @@ def is_eligible(contact: dict, now: datetime, final: bool = False) -> bool:
     last_sent = _parse_ts(contact.get("last_sent_at"))
     if final:
         last = contact.get("last_wave_design")
-        if last == f"wave_{SHOW_WAVE}":
+        today = now.astimezone(timezone.utc).date()
+        if last == f"wave_{THANKS_WAVE}":
             return False
-        if now.astimezone(timezone.utc).date() >= SHOW_START:
+        if (last == f"wave_{SHOW_WAVE}" and today >= THANKS_START) or today >= THANKS_FOR_ALL:
+            # thank-you: wave_7 contacts now, everyone else once the show is over
+            if last_sent and now - last_sent < timedelta(days=THANKS_MIN_DAYS_BETWEEN):
+                return False
+            return True
+        if today >= SHOW_START:
             # show days: everyone not yet at wave_7 gets the "we're at the stand" email
             if last_sent and now - last_sent < timedelta(days=SHOW_MIN_DAYS_BETWEEN):
                 return False
@@ -255,9 +267,12 @@ def is_eligible(contact: dict, now: datetime, final: bool = False) -> bool:
 
 def wave_for(contact: dict, final: bool, now: datetime | None = None) -> int:
     if final:
-        if (now or datetime.now(timezone.utc)).astimezone(timezone.utc).date() >= SHOW_START:
-            return SHOW_WAVE
         last = contact.get("last_wave_design")
+        today = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).date()
+        if (last == f"wave_{SHOW_WAVE}" and today >= THANKS_START) or today >= THANKS_FOR_ALL:
+            return THANKS_WAVE
+        if today >= SHOW_START:
+            return SHOW_WAVE
         if last == f"wave_{REMINDER_WAVE}":
             return SHOW_WAVE
         return REMINDER_WAVE if last == f"wave_{FINAL_WAVE}" else FINAL_WAVE
@@ -273,9 +288,10 @@ def select_batch(contacts: list[dict], now: datetime, final: bool) -> tuple[list
         already_final = {
             (c.get("email") or "").strip().lower()
             for c in contacts
-            if c.get("last_wave_design") == f"wave_{SHOW_WAVE}"
+            if c.get("last_wave_design") == f"wave_{THANKS_WAVE}"
         }
-    rank = {f"wave_{FINAL_WAVE}": 1, f"wave_{REMINDER_WAVE}": 2, f"wave_{SHOW_WAVE}": 3}
+    rank = {f"wave_{FINAL_WAVE}": 1, f"wave_{REMINDER_WAVE}": 2, f"wave_{SHOW_WAVE}": 3,
+            f"wave_{THANKS_WAVE}": 4}
     best: dict[str, int] = {}
     if final:
         for c in contacts:

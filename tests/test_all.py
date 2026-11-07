@@ -84,13 +84,22 @@ class Guards(unittest.TestCase):
             self.assertEqual(ec.wave_for(c, True, show), 7)
         self.assertFalse(ec.is_eligible(self.c(last_wave_design="wave_6", last_sent_at="2026-11-03T12:00:00Z"), show, True))
         self.assertFalse(ec.is_eligible(self.c(last_wave_design="wave_7"), show, True))
+    def test_thanks_wave(self):
+        d7 = datetime(2026, 11, 7, 12, tzinfo=timezone.utc)
+        c = self.c(last_wave_design="wave_7", last_sent_at="2026-11-04T00:00:00Z")
+        self.assertTrue(ec.is_eligible(c, d7, True)); self.assertEqual(ec.wave_for(c, True, d7), 8)
+        self.assertFalse(ec.is_eligible(self.c(last_wave_design="wave_7", last_sent_at="2026-11-06T18:00:00Z"), d7, True))
+        self.assertFalse(ec.is_eligible(self.c(last_wave_design="wave_8"), d7, True))
+        d9 = datetime(2026, 11, 9, 12, tzinfo=timezone.utc)
+        c6 = self.c(last_wave_design="wave_6", last_sent_at="2026-11-01T00:00:00Z")
+        self.assertTrue(ec.is_eligible(c6, d9, True)); self.assertEqual(ec.wave_for(c6, True, d9), 8)
     def test_wave6_waits_before_show(self):
         self.assertFalse(ec.is_eligible(self.c(last_wave_design="wave_6", last_sent_at="2026-10-20T00:00:00Z"), NOW, True))
     def test_dup_address_already_wave4(self):
         rows = [self.c(id=1, last_wave_design="wave_6", last_sent_at="2026-10-15T00:00:00Z"), self.c(id=2)]
         self.assertEqual(ec.select_batch(rows, NOW, True)[1], 0)
     def test_cutoff(self):
-        self.assertFalse(ec.is_eligible(self.c(), datetime(2026, 11, 9, tzinfo=timezone.utc), True))
+        self.assertFalse(ec.is_eligible(self.c(), datetime(2026, 11, 13, tzinfo=timezone.utc), True))
     def test_last_show_day_still_drafts(self):
         self.assertTrue(ec.is_eligible(self.c(), datetime(2026, 11, 8, 12, tzinfo=timezone.utc), True))
     def test_localized_helpdesk(self):
@@ -213,7 +222,7 @@ class NoSialkot(unittest.TestCase):
         for d in ("config", "scripts", "assets"):
             for p in (ROOT / d).rglob("*"):
                 # Hamad approved the factory address in the EICMA email signature (5 Nov)
-                if p.name in {"wave_5.html", "wave_6.html", "wave_7.html"}:
+                if p.name in {"wave_5.html", "wave_6.html", "wave_7.html", "wave_8.html"}:
                     continue
                 if p.is_file() and p.suffix in {".py", ".html", ".json", ".txt", ".md"}:
                     self.assertNotIn("sialkot", p.read_text(errors="ignore").lower(), str(p))
