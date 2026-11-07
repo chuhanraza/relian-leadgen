@@ -246,6 +246,8 @@ def is_eligible(contact: dict, now: datetime, final: bool = False) -> bool:
             if last_sent and now - last_sent < timedelta(days=THANKS_MIN_DAYS_BETWEEN):
                 return False
             return True
+        if last == f"wave_{SHOW_WAVE}":
+            return False  # wave_7 is sent once; thanks starts on THANKS_START
         if today >= SHOW_START:
             # show days: everyone not yet at wave_7 gets the "we're at the stand" email
             if last_sent and now - last_sent < timedelta(days=SHOW_MIN_DAYS_BETWEEN):
