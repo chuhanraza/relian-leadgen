@@ -15,6 +15,8 @@ Usage:
 
 from __future__ import annotations
 
+import os
+
 import json
 import re
 import sys
@@ -92,6 +94,15 @@ DISCOVERY_QUERY_VARIANTS = {
         "combat sports training academy small shop or brand {region}",
     ],
 }
+
+# Gym test (GYM_TEST_ONLY=1): ask only for independent gyms, and keep only core_gym leads.
+GYM_TEST_ONLY = os.environ.get("GYM_TEST_ONLY") == "1"
+if GYM_TEST_ONLY:
+    DISCOVERY_QUERY_VARIANTS["combat_sports"] = [
+        "independent boxing gym club {region}",
+        "Muay Thai MMA kickboxing gym academy {region}",
+        "BJJ boxing fight club gym with its own shop {region}",
+    ]
 
 DISCOVERY_PROMPTS = {
     "moto_apparel": """Web search results for "boutique motorcycle apparel brands {region}":
@@ -382,6 +393,9 @@ def _process_region(
         }
         if vertical == "combat_sports":
             sub_type = verified.get("sub_type")
+            if GYM_TEST_ONLY and sub_type != "core_gym":
+                print(f"[lead_hunter] gym test: {domain} is {sub_type}, not a gym — skipped")
+                continue
             if sub_type in ("core_gym", "shop_distributor", "small_brand"):
                 row["sub_type"] = sub_type
 

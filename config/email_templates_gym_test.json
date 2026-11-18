@@ -1,0 +1,44 @@
+{
+  "en": {
+    "subject": "Your gym's logo on gloves and hand wraps",
+    "greeting": "Hello,",
+    "body": "I am Hamad from Relian MFG, a factory in Pakistan. We make boxing gloves, hand wraps and punching bags, and we can put your gym's own logo on them. Many gyms use this for their members and for their shop. (Bags ship unfilled, you fill them locally.)\n\nIf you are interested, reply with what you need and how many pieces. I will send photos, a price and a sample plan.",
+    "optout": "Not relevant? Reply \"no\" and I will not write again.",
+    "signoff": "Hamad, Relian MFG"
+  },
+  "de": {
+    "subject": "Das Logo Ihres Gyms auf Handschuhen und Bandagen",
+    "greeting": "Guten Tag,",
+    "body": "ich bin Hamad von Relian MFG, einer Fabrik in Pakistan. Wir fertigen Boxhandschuhe, Handbandagen und Boxsäcke und können das Logo Ihres Gyms darauf anbringen. Viele Gyms nutzen das für ihre Mitglieder und für ihren Shop. (Boxsäcke werden ungefüllt geliefert und vor Ort befüllt.)\n\nBei Interesse antworten Sie mir einfach mit Ihrem Bedarf und der Stückzahl. Ich sende Fotos, einen Preis und einen Musterplan.",
+    "optout": "Kein Interesse? Antworten Sie „nein“, dann schreibe ich nicht mehr.",
+    "signoff": "Mit freundlichen Grüßen,\nHamad, Relian MFG"
+  },
+  "fr": {
+    "subject": "Le logo de votre salle sur gants et bandes de boxe",
+    "greeting": "Bonjour,",
+    "body": "je suis Hamad de Relian MFG, une usine au Pakistan. Nous fabriquons des gants de boxe, des bandes de boxe et des sacs de frappe, et nous pouvons y mettre le logo de votre salle. Beaucoup de salles le font pour leurs membres et leur boutique. (Les sacs sont livrés non remplis, vous les remplissez sur place.)\n\nSi cela vous intéresse, répondez avec vos besoins et le nombre de pièces. J'enverrai des photos, un prix et un plan d'échantillon.",
+    "optout": "Pas pertinent ? Répondez « non » et je n'écrirai plus.",
+    "signoff": "Cordialement,\nHamad, Relian MFG"
+  },
+  "es": {
+    "subject": "El logo de su gimnasio en guantes y vendas",
+    "greeting": "Hola:",
+    "body": "soy Hamad de Relian MFG, una fábrica en Pakistán. Fabricamos guantes de boxeo, vendas y sacos de boxeo, y podemos poner el logo de su gimnasio. Muchos gimnasios lo usan para sus socios y su tienda. (Los sacos se envían sin rellenar; se rellenan en destino.)\n\nSi le interesa, responda con lo que necesita y cuántas piezas. Le enviaré fotos, un precio y un plan de muestra.",
+    "optout": "¿No le interesa? Responda «no» y no volveré a escribir.",
+    "signoff": "Atentamente,\nHamad, Relian MFG"
+  },
+  "it": {
+    "subject": "Il logo della vostra palestra su guantoni e fasce",
+    "greeting": "Buongiorno,",
+    "body": "sono Hamad di Relian MFG, una fabbrica in Pakistan. Produciamo guantoni da boxe, fasce e sacchi da boxe e possiamo applicare il logo della vostra palestra. Molte palestre lo usano per i soci e per il loro negozio. (I sacchi sono spediti vuoti e si riempiono in loco.)\n\nSe siete interessati, rispondete con ciò che serve e quanti pezzi. Invierò foto, un prezzo e un piano per il campione.",
+    "optout": "Non interessati? Rispondete «no» e non scriverò più.",
+    "signoff": "Cordiali saluti,\nHamad, Relian MFG"
+  },
+  "pt": {
+    "subject": "O logo da sua academia em luvas e bandagens",
+    "greeting": "Olá,",
+    "body": "sou o Hamad da Relian MFG, uma fábrica no Paquistão. Fabricamos luvas de boxe, bandagens e sacos de pancada, e podemos colocar o logo da sua academia. Muitas academias usam isso para os alunos e para a loja. (Os sacos seguem vazios e são preenchidos localmente.)\n\nSe tiver interesse, responda com o que precisa e quantas peças. Envio fotos, preço e plano de amostra.",
+    "optout": "Não é relevante? Responda \"não\" e não escreverei mais.",
+    "signoff": "Atenciosamente,\nHamad, Relian MFG"
+  }
+}

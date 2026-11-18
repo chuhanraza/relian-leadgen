@@ -16,6 +16,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -193,6 +194,20 @@ def load_email_templates() -> dict:
     return json.loads(EMAIL_TEMPLATES_PATH.read_text(encoding="utf-8"))
 
 
+GYM_TEMPLATES_PATH = CONFIG_DIR / "email_templates_gym_test.json"
+GYM_TEST_MAX = int(os.environ.get("GYM_TEST_MAX") or 40)
+
+
+def build_gym_email(brand_name: str, research_notes: str, target_language: str) -> tuple[str, str]:
+    """Gym offer: the gym's own logo on gloves / wraps / bags. Plain text, one short opener."""
+    templates = json.loads(GYM_TEMPLATES_PATH.read_text(encoding="utf-8"))
+    t = templates.get(target_language) or templates["en"]
+    lang = target_language if target_language in templates else "en"
+    opening = generate_icebreaker(brand_name, research_notes, lang)
+    body = f"{t['greeting']}\n\n{opening}\n\n{t['body']}\n\n{t['signoff']}\n\n{t['optout']}"
+    return t["subject"], body
+
+
 def build_combat_sports_email(brand_name: str, research_notes: str, target_language: str) -> tuple[str, str]:
     template = load_email_templates()[target_language]
     opening = generate_icebreaker(brand_name, research_notes, target_language)
@@ -339,7 +354,8 @@ def run(vertical: str) -> None:
     verified = specs.get("verified_by_hamad", False)
     catalogue = load_catalogue(vertical)
 
-    leads = (
+    gym_test = os.environ.get("GYM_TEST_ONLY") == "1" and vertical == "combat_sports"
+    q = (
         db.table("outreach_leads")
         .select("*")
         .eq("vertical", vertical)
@@ -348,10 +364,19 @@ def run(vertical: str) -> None:
         .not_.is_("contact_email", "null")
         .not_.is_("research_notes", "null")
         .order("created_at")
-        .limit(COPYWRITER_BATCH_SIZE)
-        .execute()
-        .data
     )
+    if gym_test:
+        # Gym test: only gyms, and stop at GYM_TEST_MAX gym drafts in total.
+        done = len(
+            db.table("outreach_leads").select("id").eq("vertical", vertical)
+            .like("research_notes", "%[GYM TEST]%").execute().data
+        )
+        room = max(0, GYM_TEST_MAX - done)
+        print(f"[copywriter] GYM TEST: {done} drafted so far, room for {room}")
+        q = q.eq("sub_type", "core_gym").limit(min(room, COPYWRITER_BATCH_SIZE))
+    else:
+        q = q.limit(COPYWRITER_BATCH_SIZE)
+    leads = q.execute().data
     print(
         f"[copywriter] vertical={vertical} pending_this_batch={len(leads)} "
         f"(cap={COPYWRITER_BATCH_SIZE}) verified_by_hamad={verified}"
@@ -364,9 +389,13 @@ def run(vertical: str) -> None:
 
             if vertical == "combat_sports" and verified:
                 target_language = language_for_region(lead["region"])
-                subject, body = build_combat_sports_email(
-                    lead["brand_name"], lead["research_notes"], target_language
-                )
+                if gym_test:
+                    subject, body = build_gym_email(lead["brand_name"], lead["research_notes"], target_language)
+                    notes_suffix = " [GYM TEST]"
+                else:
+                    subject, body = build_combat_sports_email(
+                        lead["brand_name"], lead["research_notes"], target_language
+                    )
             elif vertical == "moto_apparel" and verified:
                 subject, body = build_moto_apparel_email(lead["brand_name"], lead["research_notes"])
             elif verified:

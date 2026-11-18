@@ -230,3 +230,22 @@ class NoSialkot(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EmailDedupe(unittest.TestCase):
+    def test_blocklist_and_freemail(self):
+        from common.email_dedupe import is_free_mail, is_never_email
+        for e in ("a@quartermile.com", "x@jts.com", "info@road-biker.com", "emailin@picture.co", "b@dane.com"):
+            self.assertTrue(is_never_email(e), e)
+        for e in ("a@jtsgym.com", "x@boxingclub.de", "me@gym.it"):
+            self.assertFalse(is_never_email(e), e)
+        self.assertTrue(is_free_mail("a@gmail.com"))
+        self.assertFalse(is_free_mail("a@fightclub.de"))
+
+    def test_gym_templates_complete(self):
+        import json
+        t = json.loads((ROOT / "config" / "email_templates_gym_test.json").read_text(encoding="utf-8"))
+        self.assertEqual(set(t), {"en", "de", "fr", "es", "it", "pt"})
+        for lang, v in t.items():
+            self.assertNotIn("CE", v["body"])
+            self.assertTrue(v["optout"] and v["subject"], lang)

@@ -1,0 +1,30 @@
+name: gym test (40 gym emails, manual only)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  run-gym-test:
+    runs-on: ubuntu-latest
+    env:
+      GYM_TEST_ONLY: "1"
+      GYM_TEST_MAX: "40"
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY_COMBAT_SPORTS }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+      GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+      GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
+      APOLLO_API_KEY: ${{ secrets.APOLLO_API_KEY }}
+      APOLLO_MAX_CALLS_PER_RUN: ${{ secrets.APOLLO_MAX_CALLS_PER_RUN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python scripts/healthcheck.py
+      - run: python scripts/lead_hunter.py combat_sports
+      - run: python scripts/enricher.py combat_sports
+      - run: python scripts/copywriter.py combat_sports
+      - run: python scripts/sender.py combat_sports

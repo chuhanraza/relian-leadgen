@@ -32,6 +32,7 @@ from common.contact_discovery import (
     reset_apollo_call_count,
 )
 from common.db import get_client
+from common.email_dedupe import reject_reason
 from common.groq_client import (
     MODEL_FAST,
     GroqQuotaExhausted,
@@ -81,6 +82,15 @@ Reply with ONLY a fenced ```json code block, a single object with exactly these 
 - contact_email: string with the real published email, or null if none was found
 No other text.
 """
+
+
+def _acceptable(db, lead, vertical, email):
+    """email_acceptable() plus: not a duplicate, not a customer/ignored contact, no free-mail for gyms."""
+    ok, why = email_acceptable(lead["brand_name"], lead["domain"], email)
+    if not ok:
+        return ok, why
+    reason = reject_reason(db, lead, email, vertical)
+    return (False, reason) if reason else (True, why)
 
 
 def run(vertical: str) -> None:
@@ -183,13 +193,13 @@ def run(vertical: str) -> None:
         # is already gated by lead_hunter's verify step, so company_small=True here.
         crawled = None
         if email:
-            ok, why = email_acceptable(lead["brand_name"], lead["domain"], email)
+            ok, why = _acceptable(db, lead, vertical, email)
             if ok and is_generic_role_email(email):
                 # Named contacts first: a generic inbox is only kept if the crawl can't
                 # surface a named mailbox on the lead's own domain.
                 crawled = crawl_domain_secondary_pages(website_url) or ""
                 if crawled and not is_generic_role_email(crawled):
-                    ok2, _ = email_acceptable(lead["brand_name"], lead["domain"], crawled)
+                    ok2, _ = _acceptable(db, lead, vertical, crawled)
                     if ok2:
                         email, ok = crawled, True
                         print(f"[enricher] {lead['domain']}: upgraded generic inbox to named contact")
@@ -212,7 +222,7 @@ def run(vertical: str) -> None:
         if crawled is None:
             crawled = crawl_domain_secondary_pages(website_url)
         if secondary_email := crawled:
-            ok, why = email_acceptable(lead["brand_name"], lead["domain"], secondary_email)
+            ok, why = _acceptable(db, lead, vertical, secondary_email)
             if ok:
                 db.table("outreach_leads").update(
                     {
@@ -237,7 +247,7 @@ def run(vertical: str) -> None:
 
         fallback_email = fallback["email"]
         if fallback_email:
-            ok, why = email_acceptable(lead["brand_name"], lead["domain"], fallback_email)
+            ok, why = _acceptable(db, lead, vertical, fallback_email)
             if not ok:
                 print(f"[enricher] rejected {fallback_email} for {lead['domain']} (fallback:{fallback['method']}): {why}")
                 fallback_email = None
